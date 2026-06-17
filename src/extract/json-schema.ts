@@ -5,6 +5,7 @@ type JsonSchemaLike = {
   title?: unknown;
   type?: unknown;
   properties?: unknown;
+  additionalProperties?: unknown;
   required?: unknown;
   items?: unknown;
   allOf?: unknown;
@@ -71,6 +72,16 @@ function visitSchemaObject(
     return;
   }
   if (!isRecord(schema.properties)) {
+    addAdditionalPropertiesFields(
+      schema,
+      modelId,
+      parentPath,
+      fields,
+      source,
+      root,
+      refStack,
+      ancestorRequired,
+    );
     if (schema && (hasSchemaType(schema, "array") || "items" in schema)) {
       const rootItemSchema = itemObjectSchema(schema, root, refStack);
       if (!rootItemSchema) {
@@ -215,6 +226,16 @@ function visitSchemaObject(
       }
     }
   }
+  addAdditionalPropertiesFields(
+    schema,
+    modelId,
+    parentPath,
+    fields,
+    source,
+    root,
+    refStack,
+    ancestorRequired,
+  );
   visitSchemaCombinators(
     schema,
     modelId,
@@ -226,6 +247,70 @@ function visitSchemaObject(
     ancestorRequired,
     inheritedRequired,
   );
+}
+
+function addAdditionalPropertiesFields(
+  schema: JsonSchemaLike,
+  modelId: string,
+  parentPath: string,
+  fields: FieldNode[],
+  source: SourceSpan,
+  root: unknown,
+  refStack: Set<string>,
+  ancestorRequired: boolean,
+): void {
+  const childSchema = asSchema(schema.additionalProperties);
+  if (!childSchema) {
+    return;
+  }
+  const refSchema = typeof childSchema.$ref === "string"
+    ? resolveRefSchema(root, childSchema.$ref, refStack)
+    : null;
+  const path = joinFieldPath(parentPath, "additionalProperties");
+  const itemSchema = itemObjectSchema(childSchema, root, refStack);
+  const descendantRequired = Boolean(
+    ancestorRequired && schemaAlwaysRequiredNestedContainer(childSchema, refSchema, itemSchema, root, refStack),
+  );
+  const objectLike = hasNestedSchema(childSchema, root, refStack);
+  addField(fields, {
+    path,
+    name: "additionalProperties",
+    type: schemaType(childSchema),
+    required: ancestorRequired,
+    nullable: schemaOrRefAllowsNull(childSchema, refSchema),
+    parent: modelId,
+    objectLike,
+    source,
+    ...(typeof childSchema.$ref === "string" ? { ref: childSchema.$ref } : {}),
+  });
+  if (!objectLike) {
+    return;
+  }
+  if (refSchema) {
+    visitSchemaObject(
+      refSchema.value,
+      modelId,
+      path,
+      fields,
+      source,
+      root,
+      withRef(refStack, refSchema.ref),
+      descendantRequired,
+    );
+  } else if (itemSchema) {
+    visitSchemaObject(
+      itemSchema.value,
+      modelId,
+      `${path}[]`,
+      fields,
+      source,
+      root,
+      withRef(refStack, itemSchema.ref),
+      descendantRequired,
+    );
+  } else {
+    visitSchemaObject(childSchema, modelId, path, fields, source, root, refStack, descendantRequired);
+  }
 }
 
 function visitSchemaCombinators(
