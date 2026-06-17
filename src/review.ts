@@ -1,15 +1,13 @@
-import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { FieldNode, FieldReview, ModelGraph, ReviewOptions } from "./types.js";
-import { pathToFileNamePart, writeJson } from "./files.js";
+import { pathToFileNamePart, prepareGeneratedOutputDir, writeJson } from "./files.js";
 
 export async function writeDeterministicReviews(
   graph: ModelGraph,
   outputDir: string,
   options: ReviewOptions = { strategy: "lindy" },
 ): Promise<FieldReview[]> {
-  await rm(outputDir, { recursive: true, force: true });
-  await mkdir(outputDir, { recursive: true });
+  await prepareGeneratedOutputDir(outputDir, ".review.json");
   const reviews: FieldReview[] = [];
   for (const model of graph.models) {
     for (const field of model.fields) {

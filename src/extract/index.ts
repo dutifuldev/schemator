@@ -102,7 +102,23 @@ function parseJsonLike(code: string): unknown | null {
 }
 
 function isJsonSchema(value: unknown): value is Record<string, unknown> {
-  return isRecord(value) && (isRecord(value["properties"]) || value["$schema"] !== undefined);
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    typeof value["$schema"] === "string" ||
+    typeof value["$id"] === "string" ||
+    isSchemaType(value["type"]) ||
+    Array.isArray(value["required"])
+  );
+}
+
+function isSchemaType(value: unknown): boolean {
+  const knownTypes = new Set(["array", "boolean", "integer", "null", "number", "object", "string"]);
+  if (typeof value === "string") {
+    return knownTypes.has(value);
+  }
+  return Array.isArray(value) && value.some((item) => typeof item === "string" && knownTypes.has(item));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

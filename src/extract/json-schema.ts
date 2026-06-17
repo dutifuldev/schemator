@@ -47,22 +47,22 @@ function visitSchemaObject(
     const path = parentPath ? `${parentPath}.${name}` : name;
     const type = schemaType(childSchema ?? child);
     const objectLike =
-      childSchema?.type === "object" ||
+      Boolean(childSchema && hasSchemaType(childSchema, "object")) ||
       isRecord(childSchema?.properties) ||
-      Boolean(childSchema?.type === "array" && itemObjectSchema(childSchema));
+      Boolean(childSchema && hasSchemaType(childSchema, "array") && itemObjectSchema(childSchema));
     fields.push({
       path,
       name,
       type,
       required: required.has(name),
-      nullable: type.includes("null"),
+      nullable: Boolean(childSchema && hasSchemaType(childSchema, "null")),
       parent: modelId,
       objectLike,
       source,
       ...(typeof childSchema?.$ref === "string" ? { ref: childSchema.$ref } : {}),
     });
     if (objectLike) {
-      const itemSchema = childSchema?.type === "array" ? itemObjectSchema(childSchema) : null;
+      const itemSchema = childSchema && hasSchemaType(childSchema, "array") ? itemObjectSchema(childSchema) : null;
       if (itemSchema) {
         visitSchemaObject(itemSchema, modelId, `${path}[]`, fields, source);
       } else {
@@ -78,7 +78,7 @@ function itemObjectSchema(schema: JsonSchemaLike): unknown | null {
   if (!itemSchema) {
     return null;
   }
-  if (itemSchema.type === "object" || isRecord(itemSchema.properties)) {
+  if (hasSchemaType(itemSchema, "object") || isRecord(itemSchema.properties)) {
     return items;
   }
   return null;
@@ -106,6 +106,13 @@ function schemaType(value: unknown): string {
 
 function asSchema(value: unknown): JsonSchemaLike | null {
   return isRecord(value) ? value : null;
+}
+
+function hasSchemaType(schema: JsonSchemaLike, type: string): boolean {
+  if (schema.type === type) {
+    return true;
+  }
+  return Array.isArray(schema.type) && schema.type.includes(type);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

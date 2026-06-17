@@ -36,7 +36,22 @@ export async function readReviews(reviewDir: string): Promise<FieldReview[]> {
 
 export function aggregateReviews(graph: ModelGraph, reviews: FieldReview[]): AggregateReview {
   const findings: AggregateFinding[] = [];
-  const reviewByKey = new Map(reviews.map((review) => [reviewKey(review.model, review.fieldPath), review]));
+  const reviewByKey = new Map<string, FieldReview>();
+  const duplicateKeys = new Set<string>();
+  for (const review of reviews) {
+    const key = reviewKey(review.model, review.fieldPath);
+    if (reviewByKey.has(key)) {
+      duplicateKeys.add(key);
+      findings.push({
+        severity: "error",
+        model: review.model,
+        fieldPath: review.fieldPath,
+        message: "Duplicate review for extracted field.",
+      });
+      continue;
+    }
+    reviewByKey.set(key, review);
+  }
   const fieldKeys = new Set<string>();
 
   for (const model of graph.models) {
@@ -66,6 +81,9 @@ export function aggregateReviews(graph: ModelGraph, reviews: FieldReview[]): Agg
 
   for (const review of reviews) {
     const key = reviewKey(review.model, review.fieldPath);
+    if (duplicateKeys.has(key)) {
+      continue;
+    }
     if (!fieldKeys.has(key)) {
       findings.push({
         severity: "error",

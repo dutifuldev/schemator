@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -6,6 +6,7 @@ import { aggregateReviews } from "../src/aggregate.js";
 import { extractGraph } from "../src/extract/index.js";
 import { pathToFileNamePart } from "../src/files.js";
 import { applyAggregateToGraph, hasSimplification } from "../src/graph.js";
+import { writeReviewJobs } from "../src/jobs.js";
 import { writeDeterministicReviews } from "../src/review.js";
 import type { AggregateReview, ModelGraph } from "../src/types.js";
 
@@ -140,8 +141,103 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts nullable JSON Schema array item fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          properties: {
+            items: {
+              type: ["array", "null"],
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                },
+              },
+            },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["items", "items[].id"]);
+      expect(graph.models[0]?.fields[0]?.nullable).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("does not treat ordinary JSON properties field as JSON Schema", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "document.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          id: "example",
+          properties: {
+            promptRecipe: "standard-v1",
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual([
+        "id",
+        "properties",
+        "properties.promptRecipe",
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("uses collision-free artifact filename parts", () => {
     expect(pathToFileNamePart("a/b")).not.toBe(pathToFileNamePart("a_b"));
+  });
+
+  test("rejects duplicate field reviews", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [field("promptRecipe", "promptRecipe", "string", false)],
+        },
+      ],
+    };
+    const aggregate = aggregateReviews(graph, [
+      reviewWithoutFinalPath("promptRecipe", "systemPromptVariant"),
+      reviewWithoutFinalPath("promptRecipe", "promptVariant"),
+    ]);
+
+    expect(aggregate.ok).toBe(false);
+    expect(aggregate.findings.map((finding) => finding.message)).toContain("Duplicate review for extracted field.");
+  });
+
+  test("refuses unsafe non-empty generated output directories", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "proposal.md");
+      await writeFile(source, ["```ts", "type ModelProfilePolicy = {", "  promptRecipe?: string;", "};", "```"].join("\n"));
+      const graph = await extractGraph(source);
+      const unsafe = join(dir, "unsafe");
+      await mkdir(unsafe);
+      await writeFile(join(unsafe, "keep.txt"), "do not delete\n");
+
+      await expect(writeDeterministicReviews(graph, unsafe)).rejects.toThrow("refusing to clear");
+      await expect(writeReviewJobs(graph, unsafe)).rejects.toThrow("refusing to clear");
+      await expect(readFile(join(unsafe, "keep.txt"), "utf8")).resolves.toBe("do not delete\n");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   test("composes parent and child renames", () => {
