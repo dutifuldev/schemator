@@ -899,7 +899,7 @@ describe("schemator", () => {
       const graph = await extractGraph(source);
 
       expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["child", "child.child"]);
-      expect(graph.models[0]?.fields.map((field) => field.objectLike)).toEqual([true, false]);
+      expect(graph.models[0]?.fields.map((field) => field.objectLike)).toEqual([true, true]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -927,7 +927,7 @@ describe("schemator", () => {
         "child.name",
         "name",
       ]);
-      expect(graph.models[0]?.fields.map((field) => field.objectLike)).toEqual([true, false, false, false]);
+      expect(graph.models[0]?.fields.map((field) => field.objectLike)).toEqual([true, true, false, false]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -2961,6 +2961,32 @@ describe("schemator", () => {
       expect(parent?.fields.map((field) => [field.path, field.objectLike, field.ref])).toEqual([
         ["box", true, "Box"],
         ["boxes", true, "Box"],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("recognizes TypeScript generic object refs with union arguments", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Box<T> = {",
+          "  value: T;",
+          "};",
+          "type Parent = {",
+          "  box: Box<string | number>;",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+      const parent = graph.models.find((model) => model.id === "Parent");
+
+      expect(parent?.fields.map((field) => [field.path, field.objectLike, field.ref])).toEqual([
+        ["box", true, "Box"],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });

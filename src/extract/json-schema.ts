@@ -305,6 +305,9 @@ function hasNestedSchema(value: unknown, root: unknown, refStack: Set<string>): 
     return false;
   }
   if (typeof schema.$ref === "string") {
+    if (refStack.has(schema.$ref)) {
+      return true;
+    }
     const refSchema = resolveRefSchema(root, schema.$ref, refStack);
     return Boolean(refSchema && hasNestedSchema(refSchema.value, root, withRef(refStack, refSchema.ref)));
   }

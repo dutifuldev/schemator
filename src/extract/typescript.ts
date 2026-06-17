@@ -759,6 +759,12 @@ function referencedModelFromTypeCandidates(
   modelNames: Set<string>,
 ): string | null {
   for (const candidate of candidates) {
+    if (ts.isTypeReferenceNode(candidate)) {
+      const refName = typeReferenceName(candidate);
+      if (refName && modelNames.has(refName)) {
+        return refName;
+      }
+    }
     const ref = referencedModel(candidate.getText(sourceFile), modelNames);
     if (ref) {
       return ref;
