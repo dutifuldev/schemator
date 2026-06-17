@@ -743,6 +743,22 @@ describe("schemator", () => {
     }
   });
 
+  test("stops ordinary YAML extraction at recursive anchor boundaries", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.yaml");
+      await writeFile(source, ["a: &a", "  b: *a"].join("\n"));
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.objectLike])).toEqual([
+        ["a", true],
+        ["a.b", true],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts nullable JSON Schema array item fields", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
