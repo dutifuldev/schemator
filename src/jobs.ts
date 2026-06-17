@@ -16,7 +16,7 @@ function renderFieldPrompt(graph: ModelGraph, model: ModelNode, field: FieldNode
   return [
     "# Schemator Field Review",
     "",
-    "You are reviewing exactly one data-model field. Be skeptical. Prefer the smallest Lindy schema: boring names, durable concepts, no metaphors, no generic bags, and no fields without a current use case.",
+    "You are reviewing exactly one data-model field. Be skeptical. Prefer the smallest Lindy schema: boring names, durable concepts, no metaphors, no generic bags, and no fields without a current use case. Aim for a data model that can remain the same for the next ten or a hundred years.",
     "",
     "Return only valid JSON matching `schemas/field-review.schema.json`.",
     "",

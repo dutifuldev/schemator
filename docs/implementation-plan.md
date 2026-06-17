@@ -21,6 +21,11 @@ covers the stated requirements.
 
 Do not rely on an agent to remember every nested field.
 
+Schemator should push reviewers toward a Lindy data model: names and stored
+facts that are boring, durable, and likely to remain the same for the next ten
+or a hundred years. The goal is not clever modeling language; it is the smallest
+schema whose concepts can survive product, provider, and implementation churn.
+
 The extractor must enumerate the model graph. Every field, nested field, column,
 selector key, policy key, JSON Schema property, SQL column, and object-like
 subfield must become an explicit review item or an explicit opaque exemption.
@@ -343,6 +348,8 @@ drift.
 - Include a deterministic local Lindy reviewer as the first runnable backend so
   extraction, coverage validation, aggregation, report generation, and
   convergence can be tested without external agent sessions.
+- Make the default prompt explicitly ask for a data model that can remain the
+  same for the next ten or a hundred years.
 - Keep source editing as a patch-plan/report artifact in v1. The reducer applies
   simplifications to the normalized graph so the run can converge, but it does
   not rewrite source files yet.
