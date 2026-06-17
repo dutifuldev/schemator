@@ -489,7 +489,29 @@ function schemaAllowsNull(schema: JsonSchemaLike): boolean {
   return allOf.length > 0 &&
     allOf.every((candidate) => {
       const candidateSchema = asSchema(candidate);
-      return Boolean(candidateSchema && schemaAllowsNull(candidateSchema));
+      return Boolean(candidateSchema && schemaCanAcceptNull(candidateSchema));
+    });
+}
+
+function schemaCanAcceptNull(schema: JsonSchemaLike): boolean {
+  if (hasSchemaType(schema, "null")) {
+    return true;
+  }
+  if (schemaTypes(schema.type).length > 0) {
+    return false;
+  }
+  const alternatives = [...schemaArray(schema.anyOf), ...schemaArray(schema.oneOf)];
+  if (alternatives.length > 0) {
+    return alternatives.some((candidate) => {
+      const candidateSchema = asSchema(candidate);
+      return Boolean(candidateSchema && schemaCanAcceptNull(candidateSchema));
+    });
+  }
+  const allOf = schemaArray(schema.allOf);
+  return allOf.length === 0 ||
+    allOf.every((candidate) => {
+      const candidateSchema = asSchema(candidate);
+      return Boolean(candidateSchema && schemaCanAcceptNull(candidateSchema));
     });
 }
 

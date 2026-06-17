@@ -292,7 +292,7 @@ function descendantPaths(value: unknown, parentPath: string, seenObjects: WeakSe
   if (arrayShape) {
     const arrayPath = parentPath ? `${parentPath}[]` : "items[]";
     for (const [key, child] of Object.entries(arrayShape.value)) {
-      const path = `${arrayPath}.${key}`;
+      const path = joinFieldPath(arrayPath, key);
       paths.add(path);
       for (const descendant of descendantPaths(child, path, seenObjects)) {
         paths.add(descendant);

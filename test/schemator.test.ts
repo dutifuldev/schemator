@@ -489,6 +489,41 @@ describe("schemator", () => {
     }
   });
 
+  test("propagates JSON Schema allOf nullability through unconstrained branches", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          properties: {
+            config: {
+              allOf: [
+                { type: ["object", "null"] },
+                {
+                  properties: {
+                    id: { type: "string" },
+                  },
+                  required: ["id"],
+                },
+              ],
+            },
+          },
+          required: ["config"],
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required, field.nullable])).toEqual([
+        ["config", true, true],
+        ["config.id", false, false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("marks JSON Schema descendants optional when object schemas can be scalar", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -1645,6 +1680,35 @@ describe("schemator", () => {
         ["items", true, false],
         ["items[].items", true, true],
         ["items[].items[].id", false, false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("marks escaped ordinary JSON array descendants optional", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "document.json");
+      await writeFile(
+        source,
+        JSON.stringify([
+          {
+            arr: [
+              {
+                "a.b": 1,
+              },
+            ],
+          },
+          {},
+        ]),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
+        ["items", true],
+        ["items[].arr", false],
+        ["items[].arr[].a~1b", false],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
