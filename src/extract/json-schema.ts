@@ -480,6 +480,9 @@ function schemaAlwaysRequiredNestedContainer(
   root: unknown,
   refStack: Set<string>,
 ): boolean {
+  if (schemaOrRefAllowsNull(schema, refSchema)) {
+    return false;
+  }
   if (itemSchema) {
     return schemaOrRefAlwaysArray(schema, refSchema, root, refStack) &&
       schemaAlwaysObject(itemSchema.value, root, withRef(refStack, itemSchema.ref));
@@ -507,6 +510,9 @@ function schemaAlwaysObject(value: unknown, root: unknown, refStack: Set<string>
   const types = schemaTypes(schema.type);
   if (types.length > 0) {
     return types.length === 1 && types[0] === "object";
+  }
+  if (isRecord(schema.properties)) {
+    return true;
   }
   const allOf = schemaArray(schema.allOf);
   if (allOf.some((candidate) => schemaAlwaysObject(candidate, root, refStack))) {

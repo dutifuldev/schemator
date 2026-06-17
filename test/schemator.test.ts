@@ -1400,11 +1400,42 @@ describe("schemator", () => {
           properties: {
             id: { type: "string" },
           },
+          required: ["id"],
         }),
       );
       const graph = await extractGraph(source);
 
-      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["id"]);
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([["id", true]]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("propagates required nested property-only JSON Schemas", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          properties: {
+            config: {
+              properties: {
+                id: { type: "string" },
+              },
+              required: ["id"],
+            },
+          },
+          required: ["config"],
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
+        ["config", true],
+        ["config.id", true],
+      ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
