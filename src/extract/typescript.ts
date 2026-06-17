@@ -81,7 +81,7 @@ function declarationToModel(
         new Set([id]),
       );
     }
-    addMemberGroupsFields(memberGroups, "", id, sourceFile, sourcePath, startLine, modelNames, fields);
+    addMemberGroupsFields(memberGroups, "", id, sourceFile, sourcePath, startLine, modelNames, fields, true);
   } else if (ts.isTypeAliasDeclaration(declaration)) {
     addArrayAliasFields(declaration, sourceFile, sourcePath, startLine, modelNames, fields);
   }
@@ -126,7 +126,17 @@ function addInheritedInterfaceFields(
         seenInterfaces,
       );
     }
-    addMemberGroupsFields(memberGroupsForDeclaration(base), "", modelId, sourceFile, sourcePath, startLine, modelNames, fields);
+    addMemberGroupsFields(
+      memberGroupsForDeclaration(base),
+      "",
+      modelId,
+      sourceFile,
+      sourcePath,
+      startLine,
+      modelNames,
+      fields,
+      true,
+    );
   }
 }
 
@@ -195,24 +205,36 @@ function addArrayAliasFields(
   const ref = referencedModelFromTypeCandidates(elementCandidates, sourceFile, modelNames);
   const inlineObjectTypes = typeLiterals(elementCandidates);
   const objectLike = Boolean(ref) || inlineObjectTypes.length > 0;
+  const fieldNullable = typeAllowsNullish(declaration.type);
   fields.push({
     path: "items",
     name: "items",
     type: declaration.type.getText(sourceFile),
     required: true,
-    nullable: typeAllowsNullish(declaration.type),
+    nullable: fieldNullable,
     parent: declaration.name.text,
     objectLike,
     source: spanForNode(declaration, sourceFile, sourcePath, startLine),
     ...(ref ? { ref } : {}),
   });
   if (inlineObjectTypes.length > 0) {
-    addTypeLiteralVariantFields(inlineObjectTypes, "items[]", declaration.name.text, sourceFile, sourcePath, startLine, modelNames, fields);
+    addTypeLiteralVariantFields(
+      inlineObjectTypes,
+      "items[]",
+      declaration.name.text,
+      sourceFile,
+      sourcePath,
+      startLine,
+      modelNames,
+      fields,
+      !fieldNullable,
+    );
   }
 }
 
 type AddPropertyFieldOptions = {
   addNested?: boolean;
+  ancestorRequired?: boolean;
   required?: boolean;
 };
 
@@ -242,12 +264,15 @@ function addPropertyField(
     .flatMap((candidate) => candidate ? nonNullableTypeNodes(candidate) : [])
     .filter((candidate): candidate is ts.TypeLiteralNode => ts.isTypeLiteralNode(candidate));
   const objectLike = Boolean(ref) || inlineObjectTypes.length > 0 || inlineArrayObjectTypes.length > 0;
+  const fieldRequired = (options.required ?? !member.questionToken) && (options.ancestorRequired ?? true);
+  const fieldNullable = typeNode ? typeAllowsNullish(typeNode) : false;
+  const descendantRequired = fieldRequired && !fieldNullable;
   fields.push({
     path,
     name,
     type,
-    required: options.required ?? !member.questionToken,
-    nullable: typeNode ? typeAllowsNullish(typeNode) : false,
+    required: fieldRequired,
+    nullable: fieldNullable,
     parent: modelId,
     objectLike,
     source: spanForNode(member, sourceFile, sourcePath, startLine),
@@ -256,10 +281,30 @@ function addPropertyField(
 
   if (options.addNested !== false) {
     if (inlineObjectTypes.length > 0) {
-      addTypeLiteralVariantFields(inlineObjectTypes, path, modelId, sourceFile, sourcePath, startLine, modelNames, fields);
+      addTypeLiteralVariantFields(
+        inlineObjectTypes,
+        path,
+        modelId,
+        sourceFile,
+        sourcePath,
+        startLine,
+        modelNames,
+        fields,
+        descendantRequired,
+      );
     }
     if (inlineArrayObjectTypes.length > 0) {
-      addTypeLiteralVariantFields(inlineArrayObjectTypes, `${path}[]`, modelId, sourceFile, sourcePath, startLine, modelNames, fields);
+      addTypeLiteralVariantFields(
+        inlineArrayObjectTypes,
+        `${path}[]`,
+        modelId,
+        sourceFile,
+        sourcePath,
+        startLine,
+        modelNames,
+        fields,
+        descendantRequired,
+      );
     }
   }
 }
@@ -273,6 +318,7 @@ function addPropertyFieldIfAbsent(
   startLine: number,
   modelNames: Set<string>,
   fields: FieldNode[],
+  ancestorRequired: boolean,
 ): void {
   const name = propertyNameText(member.name);
   if (!name) {
@@ -282,7 +328,9 @@ function addPropertyFieldIfAbsent(
   if (fields.some((field) => field.path === path)) {
     return;
   }
-  addPropertyField(member, parentPath, modelId, sourceFile, sourcePath, startLine, modelNames, fields);
+  addPropertyField(member, parentPath, modelId, sourceFile, sourcePath, startLine, modelNames, fields, {
+    ancestorRequired,
+  });
 }
 
 function addMemberGroupsFields(
@@ -294,11 +342,22 @@ function addMemberGroupsFields(
   startLine: number,
   modelNames: Set<string>,
   fields: FieldNode[],
+  ancestorRequired: boolean,
 ): void {
   if (memberGroups.length === 1) {
     for (const nested of memberGroups[0] ?? []) {
       if (ts.isPropertySignature(nested)) {
-        addPropertyFieldIfAbsent(nested, parentPath, modelId, sourceFile, sourcePath, startLine, modelNames, fields);
+        addPropertyFieldIfAbsent(
+          nested,
+          parentPath,
+          modelId,
+          sourceFile,
+          sourcePath,
+          startLine,
+          modelNames,
+          fields,
+          ancestorRequired,
+        );
       }
     }
     return;
@@ -323,16 +382,41 @@ function addMemberGroupsFields(
       const required = occurrences.length === memberGroups.length && occurrences.every((candidate) => !candidate.questionToken);
       addPropertyField(member, parentPath, modelId, sourceFile, sourcePath, startLine, modelNames, fields, {
         addNested: false,
+        ancestorRequired,
         required,
       });
       const path = parentPath ? `${parentPath}.${name}` : name;
+      const allOccurrencesNonNullable = occurrences.every((candidate) =>
+        candidate.type ? !typeAllowsNullish(candidate.type) : true
+      );
+      const descendantRequired = required && ancestorRequired && allOccurrencesNonNullable;
       const inlineObjectTypes = occurrences.flatMap((candidate) => propertyInlineObjectTypes(candidate));
       if (inlineObjectTypes.length > 0) {
-        addTypeLiteralVariantFields(inlineObjectTypes, path, modelId, sourceFile, sourcePath, startLine, modelNames, fields);
+        addTypeLiteralVariantFields(
+          inlineObjectTypes,
+          path,
+          modelId,
+          sourceFile,
+          sourcePath,
+          startLine,
+          modelNames,
+          fields,
+          descendantRequired,
+        );
       }
       const inlineArrayObjectTypes = occurrences.flatMap((candidate) => propertyInlineArrayObjectTypes(candidate));
       if (inlineArrayObjectTypes.length > 0) {
-        addTypeLiteralVariantFields(inlineArrayObjectTypes, `${path}[]`, modelId, sourceFile, sourcePath, startLine, modelNames, fields);
+        addTypeLiteralVariantFields(
+          inlineArrayObjectTypes,
+          `${path}[]`,
+          modelId,
+          sourceFile,
+          sourcePath,
+          startLine,
+          modelNames,
+          fields,
+          descendantRequired,
+        );
       }
     }
   }
@@ -347,8 +431,19 @@ function addTypeLiteralVariantFields(
   startLine: number,
   modelNames: Set<string>,
   fields: FieldNode[],
+  ancestorRequired: boolean,
 ): void {
-  addMemberGroupsFields(typeNodes.map((typeNode) => typeNode.members), parentPath, modelId, sourceFile, sourcePath, startLine, modelNames, fields);
+  addMemberGroupsFields(
+    typeNodes.map((typeNode) => typeNode.members),
+    parentPath,
+    modelId,
+    sourceFile,
+    sourcePath,
+    startLine,
+    modelNames,
+    fields,
+    ancestorRequired,
+  );
 }
 
 function propertyInlineObjectTypes(member: ts.PropertySignature): ts.TypeLiteralNode[] {

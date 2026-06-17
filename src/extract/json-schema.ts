@@ -20,7 +20,7 @@ export function extractJsonSchemaModel(
   source: SourceSpan,
 ): ModelNode {
   const fields: FieldNode[] = [];
-  visitSchemaObject(value, modelId, "", fields, source, value, new Set());
+  visitSchemaObject(value, modelId, "", fields, source, value, new Set(), true);
   return {
     id: modelId,
     kind: "object",
@@ -37,12 +37,22 @@ function visitSchemaObject(
   source: SourceSpan,
   root: unknown,
   refStack: Set<string>,
+  ancestorRequired: boolean,
 ): void {
   const schema = asSchema(value);
   if (typeof schema?.$ref === "string") {
     const refSchema = resolveRefSchema(root, schema.$ref, refStack);
     if (refSchema) {
-      visitSchemaObject(refSchema.value, modelId, parentPath, fields, source, root, withRef(refStack, refSchema.ref));
+      visitSchemaObject(
+        refSchema.value,
+        modelId,
+        parentPath,
+        fields,
+        source,
+        root,
+        withRef(refStack, refSchema.ref),
+        ancestorRequired,
+      );
     }
     return;
   }
@@ -61,15 +71,17 @@ function visitSchemaObject(
           source,
           root,
           withRef(refStack, rootItemSchema.ref),
+          ancestorRequired,
         );
         return;
       }
+      const rootArrayNullable = hasSchemaType(schema, "null");
       fields.push({
         path: "items",
         name: "items",
         type: schemaType(schema),
         required: true,
-        nullable: hasSchemaType(schema, "null"),
+        nullable: rootArrayNullable,
         parent: modelId,
         objectLike: true,
         source,
@@ -82,6 +94,7 @@ function visitSchemaObject(
         source,
         root,
         withRef(refStack, rootItemSchema.ref),
+        !rootArrayNullable,
       );
     }
     return;
@@ -100,6 +113,9 @@ function visitSchemaObject(
       : null;
     const path = parentPath ? `${parentPath}.${name}` : name;
     const type = schemaType(childSchema ?? child);
+    const fieldRequired = ancestorRequired && required.has(name);
+    const fieldNullable = Boolean(childSchema && hasSchemaType(childSchema, "null"));
+    const descendantRequired = fieldRequired && !fieldNullable;
     const itemSchema = childSchema && hasSchemaType(childSchema, "array")
       ? itemObjectSchema(childSchema, root, refStack)
       : null;
@@ -112,8 +128,8 @@ function visitSchemaObject(
       path,
       name,
       type,
-      required: required.has(name),
-      nullable: Boolean(childSchema && hasSchemaType(childSchema, "null")),
+      required: fieldRequired,
+      nullable: fieldNullable,
       parent: modelId,
       objectLike,
       source,
@@ -121,11 +137,29 @@ function visitSchemaObject(
     });
     if (objectLike) {
       if (refSchema) {
-        visitSchemaObject(refSchema.value, modelId, path, fields, source, root, withRef(refStack, refSchema.ref));
+        visitSchemaObject(
+          refSchema.value,
+          modelId,
+          path,
+          fields,
+          source,
+          root,
+          withRef(refStack, refSchema.ref),
+          descendantRequired,
+        );
       } else if (itemSchema) {
-        visitSchemaObject(itemSchema.value, modelId, `${path}[]`, fields, source, root, withRef(refStack, itemSchema.ref));
+        visitSchemaObject(
+          itemSchema.value,
+          modelId,
+          `${path}[]`,
+          fields,
+          source,
+          root,
+          withRef(refStack, itemSchema.ref),
+          descendantRequired,
+        );
       } else {
-        visitSchemaObject(child, modelId, path, fields, source, root, refStack);
+        visitSchemaObject(child, modelId, path, fields, source, root, refStack, descendantRequired);
       }
     }
   }

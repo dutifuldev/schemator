@@ -192,6 +192,79 @@ describe("schemator", () => {
     }
   });
 
+  test("propagates optional JSON Schema parents to nested required fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          properties: {
+            config: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+              },
+              required: ["id"],
+            },
+            entries: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  value: { type: "string" },
+                },
+                required: ["value"],
+              },
+            },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
+        ["config", false],
+        ["config.id", false],
+        ["entries", false],
+        ["entries[].value", false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("propagates nullable JSON Schema parents to nested required fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          properties: {
+            config: {
+              type: ["object", "null"],
+              properties: {
+                id: { type: "string" },
+              },
+              required: ["id"],
+            },
+          },
+          required: ["config"],
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required, field.nullable])).toEqual([
+        ["config", true, true],
+        ["config.id", false, false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts root JSON Schema array item fields", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -956,6 +1029,61 @@ describe("schemator", () => {
         ["status", false],
         ["value", false],
         ["maybe", true],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("propagates optional TypeScript parents to inline children", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Parent = {",
+          "  config?: {",
+          "    id: string;",
+          "  };",
+          "  items?: {",
+          "    value: string;",
+          "  }[];",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
+        ["config", false],
+        ["config.id", false],
+        ["items", false],
+        ["items[].value", false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("propagates nullable TypeScript parents to inline children", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Parent = {",
+          "  config: {",
+          "    id: string;",
+          "  } | null;",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required, field.nullable])).toEqual([
+        ["config", true, true],
+        ["config.id", false, false],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
