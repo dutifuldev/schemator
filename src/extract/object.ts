@@ -1,5 +1,10 @@
 import type { FieldNode, ModelNode, SourceSpan } from "../types.js";
 
+type ObjectShape = {
+  value: Record<string, unknown>;
+  optionalPaths: Set<string>;
+};
+
 export function extractObjectModel(value: unknown, modelId: string, source: SourceSpan): ModelNode {
   const fields: FieldNode[] = [];
   if (isRecord(value)) {
@@ -17,7 +22,7 @@ export function extractObjectModel(value: unknown, modelId: string, source: Sour
         objectLike: true,
         source,
       });
-      visitObject(arrayItem, modelId, "items[]", fields, source);
+      visitObject(arrayItem.value, modelId, "items[]", fields, source, prefixPaths(arrayItem.optionalPaths, "items[]"));
     }
   }
   return {
@@ -56,6 +61,7 @@ function visitObject(
   parentPath: string,
   fields: FieldNode[],
   source: SourceSpan,
+  optionalPaths: Set<string> = new Set(),
 ): void {
   for (const [name, child] of Object.entries(value)) {
     const path = parentPath ? `${parentPath}.${name}` : name;
@@ -65,16 +71,16 @@ function visitObject(
       path,
       name,
       type: valueType(child),
-      required: true,
+      required: !optionalPaths.has(path),
       nullable: child === null,
       parent: modelId,
       objectLike,
       source,
     });
     if (arrayItem) {
-      visitObject(arrayItem, modelId, `${path}[]`, fields, source);
+      visitObject(arrayItem.value, modelId, `${path}[]`, fields, source, mergePathSets(optionalPaths, prefixPaths(arrayItem.optionalPaths, `${path}[]`)));
     } else if (isRecord(child)) {
-      visitObject(child, modelId, path, fields, source);
+      visitObject(child, modelId, path, fields, source, optionalPaths);
     }
   }
 }
@@ -96,7 +102,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function arrayObjectShape(value: unknown): Record<string, unknown> | null {
+function arrayObjectShape(value: unknown): ObjectShape | null {
   if (!Array.isArray(value)) {
     return null;
   }
@@ -104,10 +110,14 @@ function arrayObjectShape(value: unknown): Record<string, unknown> | null {
   if (objects.length === 0) {
     return null;
   }
-  return objects.reduce<Record<string, unknown>>(
+  const shape = objects.reduce<Record<string, unknown>>(
     (shape, item) => mergeObjectShapes(shape, item),
     {},
   );
+  return {
+    value: shape,
+    optionalPaths: optionalPathsForObjects(objects, shape, ""),
+  };
 }
 
 function mergeObjectShapes(left: Record<string, unknown>, right: Record<string, unknown>): Record<string, unknown> {
@@ -125,13 +135,81 @@ function mergeShapeValue(left: unknown, right: unknown): unknown {
   const leftArrayShape = arrayObjectShape(left);
   const rightArrayShape = arrayObjectShape(right);
   if (leftArrayShape && rightArrayShape) {
-    return [mergeObjectShapes(leftArrayShape, rightArrayShape)];
+    return [mergeObjectShapes(leftArrayShape.value, rightArrayShape.value)];
   }
   if (leftArrayShape) {
-    return [leftArrayShape];
+    return [leftArrayShape.value];
   }
   if (rightArrayShape) {
-    return [rightArrayShape];
+    return [rightArrayShape.value];
   }
   return isRecord(right) && !isRecord(left) ? right : left;
+}
+
+function optionalPathsForObjects(
+  objects: Record<string, unknown>[],
+  shape: Record<string, unknown>,
+  parentPath: string,
+): Set<string> {
+  const optionalPaths = new Set<string>();
+  for (const [key, value] of Object.entries(shape)) {
+    const path = parentPath ? `${parentPath}.${key}` : key;
+    const presentValues = objects.filter((object) => key in object).map((object) => object[key]);
+    const missingFromSomeObjects = presentValues.length !== objects.length;
+    if (missingFromSomeObjects) {
+      optionalPaths.add(path);
+      for (const descendant of descendantPaths(value, path)) {
+        optionalPaths.add(descendant);
+      }
+    }
+    if (isRecord(value)) {
+      for (const nested of optionalPathsForObjects(presentValues.filter(isRecord), value, path)) {
+        optionalPaths.add(nested);
+      }
+    }
+    const arrayShape = arrayObjectShape(value);
+    if (arrayShape) {
+      for (const nested of prefixPaths(arrayShape.optionalPaths, `${path}[]`)) {
+        optionalPaths.add(nested);
+      }
+    }
+  }
+  return optionalPaths;
+}
+
+function descendantPaths(value: unknown, parentPath: string): Set<string> {
+  const paths = new Set<string>();
+  if (isRecord(value)) {
+    for (const [key, child] of Object.entries(value)) {
+      const path = `${parentPath}.${key}`;
+      paths.add(path);
+      for (const descendant of descendantPaths(child, path)) {
+        paths.add(descendant);
+      }
+    }
+  }
+  const arrayShape = arrayObjectShape(value);
+  if (arrayShape) {
+    const arrayPath = `${parentPath}[]`;
+    for (const [key, child] of Object.entries(arrayShape.value)) {
+      const path = `${arrayPath}.${key}`;
+      paths.add(path);
+      for (const descendant of descendantPaths(child, path)) {
+        paths.add(descendant);
+      }
+    }
+  }
+  return paths;
+}
+
+function prefixPaths(paths: Set<string>, prefix: string): Set<string> {
+  const prefixed = new Set<string>();
+  for (const path of paths) {
+    prefixed.add(`${prefix}.${path}`);
+  }
+  return prefixed;
+}
+
+function mergePathSets(left: Set<string>, right: Set<string>): Set<string> {
+  return new Set([...left, ...right]);
 }

@@ -607,6 +607,11 @@ describe("schemator", () => {
         "items[].id",
         "items[].promptRecipe",
       ]);
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
+        ["items", true],
+        ["items[].id", false],
+        ["items[].promptRecipe", false],
+      ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -640,6 +645,13 @@ describe("schemator", () => {
         "items[].promptRecipe",
         "items[].nested",
         "items[].nested.value",
+      ]);
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
+        ["items", true],
+        ["items[].id", false],
+        ["items[].promptRecipe", false],
+        ["items[].nested", false],
+        ["items[].nested.value", false],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -794,6 +806,31 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts readonly TypeScript inline object arrays", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Cart = {",
+          "  items: readonly {",
+          "    id: string;",
+          "  }[];",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.objectLike])).toEqual([
+        ["items", true],
+        ["items[].id", false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts top-level TypeScript array aliases", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -814,6 +851,31 @@ describe("schemator", () => {
         "items",
         "items[].id",
         "items[].promptRecipe",
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("recognizes TypeScript array aliases as model references", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Child = { id: string };",
+          "type Children = Child[];",
+          "type Parent = {",
+          "  children: Children;",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+      const parent = graph.models.find((model) => model.id === "Parent");
+
+      expect(parent?.fields.map((field) => [field.path, field.objectLike, field.ref])).toEqual([
+        ["children", true, "Children"],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -1150,6 +1212,48 @@ describe("schemator", () => {
     expect(plan).not.toContain("- Final path: config.variant");
   });
 
+  test("uses source-neutral rename text in patch plans", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [
+            {
+              ...field("promptRecipe", "promptRecipe", "string", false),
+              required: false,
+            },
+          ],
+        },
+      ],
+    };
+    const aggregate: AggregateReview = {
+      schemaVersion: 1,
+      ok: true,
+      summary: {
+        totalFields: 1,
+        keep: 0,
+        rename: 1,
+        merge: 0,
+        derive: 0,
+        move: 0,
+        defer: 0,
+        remove: 0,
+        opaque: 0,
+      },
+      findings: [],
+      decisions: [reviewWithoutFinalPath("promptRecipe", "systemPromptVariant")],
+    };
+    const plan = renderPatchPlan(graph, aggregate);
+
+    expect(plan).toContain("- From: `promptRecipe`");
+    expect(plan).toContain("- To: `systemPromptVariant`");
+    expect(plan).not.toContain("promptRecipe?:");
+  });
+
   test("uses finalName when rename review omits finalPath", () => {
     const graph: ModelGraph = {
       schemaVersion: 1,
@@ -1312,6 +1416,31 @@ describe("schemator", () => {
       expect(parent?.fields.map((field) => [field.path, field.objectLike, field.ref])).toEqual([
         ["children", true, "Child"],
         ["readonlyChildren", true, "Child"],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("recognizes TypeScript unioned array model references", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Child = { id: string };",
+          "type Other = { name: string };",
+          "type Parent = {",
+          "  children: (Child | Other)[];",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+      const parent = graph.models.find((model) => model.id === "Parent");
+
+      expect(parent?.fields.map((field) => [field.path, field.objectLike, field.ref])).toEqual([
+        ["children", true, "Child"],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });

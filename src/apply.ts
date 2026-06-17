@@ -27,12 +27,10 @@ export function renderPatchPlan(graph: ModelGraph, aggregate: AggregateReview): 
     lines.push(`- Rationale: ${decision.rationale}`);
     lines.push("");
     if (decision.decision === "rename") {
-      lines.push("Suggested textual replacement:");
+      lines.push("Suggested rename:");
       lines.push("");
-      lines.push("```diff");
-      lines.push(`- ${lastSegment(decision.fieldPath)}${optionalMarker(decision.required)}:`);
-      lines.push(`+ ${decision.finalName}${optionalMarker(decision.required)}:`);
-      lines.push("```");
+      lines.push(`- From: \`${lastSegment(decision.fieldPath)}\``);
+      lines.push(`- To: \`${decision.finalName}\``);
       lines.push("");
     }
   }
@@ -75,8 +73,4 @@ function rawFinalPathForRename(decision: AggregateReview["decisions"][number]): 
 
 function lastSegment(path: string): string {
   return path.split(".").at(-1) ?? path;
-}
-
-function optionalMarker(required: boolean): string {
-  return required ? "" : "?";
 }

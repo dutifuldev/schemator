@@ -40,7 +40,7 @@ function collectDeclarations(sourceFile: ts.SourceFile): Declaration[] {
 function extractObjectModelNames(declarations: Declaration[]): Set<string> {
   return new Set(
     declarations
-      .filter((declaration) => declarationHasMembers(declaration))
+      .filter((declaration) => declarationHasMembers(declaration) || declarationIsArrayAlias(declaration))
       .map((declaration) => declaration.name.text),
   );
 }
@@ -86,6 +86,10 @@ function declarationHasMembers(declaration: Declaration): boolean {
   return membersForDeclaration(declaration) !== null;
 }
 
+function declarationIsArrayAlias(declaration: Declaration): boolean {
+  return ts.isTypeAliasDeclaration(declaration) && Boolean(arrayElementTypeNode(declaration.type));
+}
+
 function modelKind(declaration: Declaration): ModelKind {
   if (ts.isInterfaceDeclaration(declaration)) {
     return "object";
@@ -118,9 +122,7 @@ function addArrayAliasFields(
     return;
   }
   const elementCandidates = nonNullableTypeNodes(elementType);
-  const ref =
-    referencedModelFromTypeCandidates(elementCandidates, sourceFile, modelNames) ??
-    referencedModel(elementType.getText(sourceFile), modelNames);
+  const ref = referencedModelFromTypeCandidates(elementCandidates, sourceFile, modelNames);
   const inlineObjectType = firstTypeLiteral(elementCandidates);
   const objectLike = Boolean(ref) || Boolean(inlineObjectType);
   fields.push({
@@ -237,17 +239,21 @@ function isNullishTypeNode(typeNode: ts.TypeNode): boolean {
 }
 
 function arrayElementTypeNode(typeNode: ts.TypeNode): ts.TypeNode | null {
-  if (ts.isArrayTypeNode(typeNode)) {
-    return unwrapParenthesizedType(typeNode.elementType);
+  const unwrapped = unwrapParenthesizedType(typeNode);
+  if (ts.isTypeOperatorNode(unwrapped) && unwrapped.operator === ts.SyntaxKind.ReadonlyKeyword) {
+    return arrayElementTypeNode(unwrapped.type);
   }
-  if (!ts.isTypeReferenceNode(typeNode) || !typeNode.typeArguments || typeNode.typeArguments.length !== 1) {
+  if (ts.isArrayTypeNode(unwrapped)) {
+    return unwrapParenthesizedType(unwrapped.elementType);
+  }
+  if (!ts.isTypeReferenceNode(unwrapped) || !unwrapped.typeArguments || unwrapped.typeArguments.length !== 1) {
     return null;
   }
-  const typeName = typeNode.typeName.getText();
+  const typeName = unwrapped.typeName.getText();
   if (typeName !== "Array" && typeName !== "ReadonlyArray") {
     return null;
   }
-  return unwrapParenthesizedType(typeNode.typeArguments[0] as ts.TypeNode);
+  return unwrapParenthesizedType(unwrapped.typeArguments[0] as ts.TypeNode);
 }
 
 function referencedModel(typeText: string, modelNames: Set<string>): string | null {
@@ -281,6 +287,13 @@ function referencedModelFromTypeCandidates(
     const ref = referencedModel(candidate.getText(sourceFile), modelNames);
     if (ref) {
       return ref;
+    }
+    const arrayElement = arrayElementTypeNode(candidate);
+    if (arrayElement) {
+      const arrayRef = referencedModelFromTypeCandidates(nonNullableTypeNodes(arrayElement), sourceFile, modelNames);
+      if (arrayRef) {
+        return arrayRef;
+      }
     }
   }
   return null;
