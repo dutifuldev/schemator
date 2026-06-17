@@ -1,4 +1,5 @@
 import { extname } from "node:path";
+import ts from "typescript";
 import { parse as parseYaml } from "yaml";
 import { readText } from "../files.js";
 import { fencedCodeBlocks } from "../markdown.js";
@@ -69,7 +70,7 @@ function extractMarkdownModels(text: string, sourcePath: string): ModelNode[] {
       continue;
     }
     if (block.language === "json" || block.language === "jsonc") {
-      const parsed = parseJsonLike(block.code);
+      const parsed = block.language === "jsonc" ? parseJsoncLike(block.code) : parseJsonLike(block.code);
       if (parsed !== null) {
         jsonIndex += 1;
         models.push(jsonLikeToModel(parsed, `JsonBlock${jsonIndex}`, source));
@@ -99,6 +100,11 @@ function parseJsonLike(code: string): unknown | null {
   } catch {
     return null;
   }
+}
+
+function parseJsoncLike(code: string): unknown | null {
+  const parsed = ts.parseConfigFileTextToJson("schema.jsonc", code);
+  return parsed.error ? null : parsed.config as unknown;
 }
 
 function isJsonSchema(value: unknown): value is Record<string, unknown> {

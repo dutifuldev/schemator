@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { describe, expect, test } from "vitest";
 import { aggregateReviews } from "../src/aggregate.js";
 import { extractGraph } from "../src/extract/index.js";
@@ -9,6 +11,8 @@ import { applyAggregateToGraph, hasSimplification } from "../src/graph.js";
 import { writeReviewJobs } from "../src/jobs.js";
 import { writeDeterministicReviews } from "../src/review.js";
 import type { AggregateReview, ModelGraph } from "../src/types.js";
+
+const execFileAsync = promisify(execFile);
 
 describe("schemator", () => {
   test("extracts nested TypeScript fields from Markdown", async () => {
@@ -171,6 +175,29 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts Markdown JSONC fences", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "proposal.md");
+      await writeFile(
+        source,
+        [
+          "```jsonc",
+          "{",
+          "  // comments and trailing commas are valid JSONC",
+          '  "promptRecipe": "standard-v1",',
+          "}",
+          "```",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["promptRecipe"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("does not treat ordinary JSON properties field as JSON Schema", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -191,6 +218,33 @@ describe("schemator", () => {
         "properties",
         "properties.promptRecipe",
       ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps nullable TypeScript model references object-like", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Child = {",
+          "  id: string;",
+          "};",
+          "type Parent = {",
+          "  child?: Child | null;",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+      const parent = graph.models.find((model) => model.id === "Parent");
+      const child = parent?.fields.find((field) => field.path === "child");
+
+      expect(child?.objectLike).toBe(true);
+      expect(child?.ref).toBe("Child");
+      expect(child?.nullable).toBe(true);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -235,6 +289,31 @@ describe("schemator", () => {
       await expect(writeDeterministicReviews(graph, unsafe)).rejects.toThrow("refusing to clear");
       await expect(writeReviewJobs(graph, unsafe)).rejects.toThrow("refusing to clear");
       await expect(readFile(join(unsafe, "keep.txt"), "utf8")).resolves.toBe("do not delete\n");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("reports manual run directories without final graph", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "proposal.md");
+      const runDir = join(dir, "run");
+      await mkdir(runDir);
+      await writeFile(source, ["```ts", "type ModelProfilePolicy = {", "  promptRecipe?: string;", "};", "```"].join("\n"));
+      const graph = await extractGraph(source);
+      await writeFile(join(runDir, "graph.iteration-1.json"), JSON.stringify(graph, null, 2));
+      const reviews = await writeDeterministicReviews(graph, join(runDir, "reviews.iteration-1"));
+      const aggregate = aggregateReviews(graph, reviews);
+      await writeFile(join(runDir, "aggregate.iteration-1.json"), JSON.stringify(aggregate, null, 2));
+
+      await execFileAsync(tsxBin(), ["src/cli.ts", "report", "--run", runDir, "--out", join(runDir, "final-report.md")], {
+        cwd: process.cwd(),
+      });
+
+      await expect(readFile(join(runDir, "final-report.md"), "utf8")).resolves.toContain(
+        "Schemator Data Model Review",
+      );
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -453,4 +532,8 @@ function reviewWithoutFinalPath(fieldPath: string, finalName: string) {
     confidence: "high" as const,
     questions: [],
   };
+}
+
+function tsxBin(): string {
+  return join(process.cwd(), "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
 }

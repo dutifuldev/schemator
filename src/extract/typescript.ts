@@ -141,12 +141,18 @@ function propertyNameText(name: ts.PropertyName): string | null {
 
 function referencedModel(typeText: string, modelNames: Set<string>): string | null {
   const bare = /^readonly\s+/.test(typeText) ? typeText.replace(/^readonly\s+/, "") : typeText;
-  const arrayMatch = /^([A-Z][A-Za-z0-9_]*)\[\]$/.exec(bare);
-  if (arrayMatch?.[1] && modelNames.has(arrayMatch[1])) {
-    return arrayMatch[1];
-  }
-  if (modelNames.has(bare)) {
-    return bare;
+  const candidates = bare
+    .split("|")
+    .map((candidate) => candidate.trim())
+    .filter((candidate) => candidate !== "null" && candidate !== "undefined");
+  for (const candidate of candidates) {
+    const arrayMatch = /^([A-Z][A-Za-z0-9_]*)\[\]$/.exec(candidate);
+    if (arrayMatch?.[1] && modelNames.has(arrayMatch[1])) {
+      return arrayMatch[1];
+    }
+    if (modelNames.has(candidate)) {
+      return candidate;
+    }
   }
   return null;
 }

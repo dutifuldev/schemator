@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdir } from "node:fs/promises";
+import { access, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Command } from "commander";
 import { aggregateReviews, readReviews } from "./aggregate.js";
@@ -126,7 +126,10 @@ program
       const paths = reportPaths(options);
       const graph = assertModelGraph(await readJson(paths.graph));
       const aggregate = assertAggregateReview(await readJson(paths.aggregate));
-      const finalGraph = paths.finalGraph ? assertModelGraph(await readJson(paths.finalGraph)) : undefined;
+      const hasFinalGraph = paths.finalGraph ? await pathExists(paths.finalGraph) : false;
+      const finalGraph = paths.finalGraph && hasFinalGraph
+        ? assertModelGraph(await readJson(paths.finalGraph))
+        : undefined;
       await writeText(resolvePath(options.out), renderReport(graph, aggregate, finalGraph));
     });
   });
@@ -259,5 +262,14 @@ async function runCommand(action: () => Promise<void>): Promise<void> {
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 2;
+  }
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
   }
 }
