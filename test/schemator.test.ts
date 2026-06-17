@@ -773,6 +773,65 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts inherited TypeScript interface fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "interface Base {",
+          "  id: string;",
+          "  settings?: {",
+          "    promptRecipe?: string;",
+          "  };",
+          "}",
+          "interface User extends Base {",
+          "  name: string;",
+          "}",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+      const user = graph.models.find((model) => model.id === "User");
+
+      expect(user?.fields.map((field) => field.path)).toEqual([
+        "id",
+        "settings",
+        "settings.promptRecipe",
+        "name",
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("extracts transitive inherited TypeScript interface fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "interface Entity {",
+          "  id: string;",
+          "}",
+          "interface Named extends Entity {",
+          "  name: string;",
+          "}",
+          "interface User extends Named {",
+          "  promptRecipe?: string;",
+          "}",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+      const user = graph.models.find((model) => model.id === "User");
+
+      expect(user?.fields.map((field) => field.path)).toEqual(["id", "name", "promptRecipe"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts nullable TypeScript inline object unions", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -977,6 +1036,62 @@ describe("schemator", () => {
       await expect(readFile(join(runDir, "final-report.md"), "utf8")).resolves.toContain(
         "Schemator Data Model Review",
       );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("apply refuses invalid aggregates", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const graphPath = join(dir, "graph.json");
+      const aggregatePath = join(dir, "aggregate.json");
+      const outPath = join(dir, "patch.md");
+      const graph: ModelGraph = {
+        schemaVersion: 1,
+        source: { path: "schema.json", revision: null },
+        models: [
+          {
+            id: "JsonSchema",
+            kind: "object",
+            source: sourceSpan(),
+            fields: [field("promptRecipe", "promptRecipe", "string", false)],
+          },
+        ],
+      };
+      const aggregate: AggregateReview = {
+        schemaVersion: 1,
+        ok: false,
+        summary: {
+          totalFields: 0,
+          keep: 0,
+          rename: 0,
+          merge: 0,
+          derive: 0,
+          move: 0,
+          defer: 0,
+          remove: 0,
+          opaque: 0,
+        },
+        decisions: [],
+        findings: [
+          {
+            severity: "error",
+            model: "JsonSchema",
+            fieldPath: "promptRecipe",
+            message: "Extracted field is missing a review.",
+          },
+        ],
+      };
+      await writeFile(graphPath, JSON.stringify(graph, null, 2));
+      await writeFile(aggregatePath, JSON.stringify(aggregate, null, 2));
+
+      await expect(
+        execFileAsync(tsxBin(), ["src/cli.ts", "apply", "--graph", graphPath, "--aggregate", aggregatePath, "--out", outPath], {
+          cwd: process.cwd(),
+        }),
+      ).rejects.toMatchObject({ code: 2 });
+      await expect(readFile(outPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

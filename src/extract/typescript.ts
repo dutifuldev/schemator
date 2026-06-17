@@ -14,11 +14,12 @@ export function extractTypeScriptModels(
   const sourceFile = ts.createSourceFile(sourcePath, code, ts.ScriptTarget.Latest, true);
   const declarations = collectDeclarations(sourceFile);
   const objectModelNames = extractObjectModelNames(declarations);
+  const interfaceDeclarations = collectInterfaceDeclarations(declarations);
   for (const modelName of knownObjectModelNames) {
     objectModelNames.add(modelName);
   }
   return declarations.map((declaration) =>
-    declarationToModel(declaration, sourceFile, sourcePath, startLine, objectModelNames)
+    declarationToModel(declaration, sourceFile, sourcePath, startLine, objectModelNames, interfaceDeclarations)
   );
 }
 
@@ -45,20 +46,44 @@ function extractObjectModelNames(declarations: Declaration[]): Set<string> {
   );
 }
 
+function collectInterfaceDeclarations(declarations: Declaration[]): Map<string, ts.InterfaceDeclaration> {
+  const interfaces = new Map<string, ts.InterfaceDeclaration>();
+  for (const declaration of declarations) {
+    if (ts.isInterfaceDeclaration(declaration)) {
+      interfaces.set(declaration.name.text, declaration);
+    }
+  }
+  return interfaces;
+}
+
 function declarationToModel(
   declaration: Declaration,
   sourceFile: ts.SourceFile,
   sourcePath: string,
   startLine: number,
   modelNames: Set<string>,
+  interfaceDeclarations: Map<string, ts.InterfaceDeclaration>,
 ): ModelNode {
   const id = declaration.name.text;
   const fields: FieldNode[] = [];
   const members = membersForDeclaration(declaration);
   if (members) {
+    if (ts.isInterfaceDeclaration(declaration)) {
+      addInheritedInterfaceFields(
+        declaration,
+        id,
+        sourceFile,
+        sourcePath,
+        startLine,
+        modelNames,
+        interfaceDeclarations,
+        fields,
+        new Set([id]),
+      );
+    }
     for (const member of members) {
       if (ts.isPropertySignature(member)) {
-        addPropertyField(member, "", id, sourceFile, sourcePath, startLine, modelNames, fields);
+        addPropertyFieldIfAbsent(member, "", id, sourceFile, sourcePath, startLine, modelNames, fields);
       }
     }
   } else if (ts.isTypeAliasDeclaration(declaration)) {
@@ -70,6 +95,51 @@ function declarationToModel(
     source: spanForNode(declaration, sourceFile, sourcePath, startLine),
     fields,
   };
+}
+
+function addInheritedInterfaceFields(
+  declaration: ts.InterfaceDeclaration,
+  modelId: string,
+  sourceFile: ts.SourceFile,
+  sourcePath: string,
+  startLine: number,
+  modelNames: Set<string>,
+  interfaceDeclarations: Map<string, ts.InterfaceDeclaration>,
+  fields: FieldNode[],
+  seenInterfaces: Set<string>,
+): void {
+  for (const baseName of extendedInterfaceNames(declaration, sourceFile)) {
+    if (seenInterfaces.has(baseName)) {
+      continue;
+    }
+    const base = interfaceDeclarations.get(baseName);
+    if (!base) {
+      continue;
+    }
+    seenInterfaces.add(baseName);
+    addInheritedInterfaceFields(
+      base,
+      modelId,
+      sourceFile,
+      sourcePath,
+      startLine,
+      modelNames,
+      interfaceDeclarations,
+      fields,
+      seenInterfaces,
+    );
+    for (const member of base.members) {
+      if (ts.isPropertySignature(member)) {
+        addPropertyFieldIfAbsent(member, "", modelId, sourceFile, sourcePath, startLine, modelNames, fields);
+      }
+    }
+  }
+}
+
+function extendedInterfaceNames(declaration: ts.InterfaceDeclaration, sourceFile: ts.SourceFile): string[] {
+  return (declaration.heritageClauses ?? [])
+    .filter((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword)
+    .flatMap((clause) => clause.types.map((heritageType) => heritageType.expression.getText(sourceFile)));
 }
 
 function membersForDeclaration(declaration: Declaration): ts.NodeArray<ts.TypeElement> | null {
@@ -185,6 +255,27 @@ function addPropertyField(
   }
 }
 
+function addPropertyFieldIfAbsent(
+  member: ts.PropertySignature,
+  parentPath: string,
+  modelId: string,
+  sourceFile: ts.SourceFile,
+  sourcePath: string,
+  startLine: number,
+  modelNames: Set<string>,
+  fields: FieldNode[],
+): void {
+  const name = propertyNameText(member.name);
+  if (!name) {
+    return;
+  }
+  const path = parentPath ? `${parentPath}.${name}` : name;
+  if (fields.some((field) => field.path === path)) {
+    return;
+  }
+  addPropertyField(member, parentPath, modelId, sourceFile, sourcePath, startLine, modelNames, fields);
+}
+
 function addTypeLiteralFields(
   typeNode: ts.TypeLiteralNode,
   parentPath: string,
@@ -197,7 +288,7 @@ function addTypeLiteralFields(
 ): void {
   for (const nested of typeNode.members) {
     if (ts.isPropertySignature(nested)) {
-      addPropertyField(nested, parentPath, modelId, sourceFile, sourcePath, startLine, modelNames, fields);
+      addPropertyFieldIfAbsent(nested, parentPath, modelId, sourceFile, sourcePath, startLine, modelNames, fields);
     }
   }
 }

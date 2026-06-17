@@ -111,6 +111,11 @@ program
     await runCommand(async () => {
       const graph = assertModelGraph(await readJson(resolvePath(options.graph)));
       const aggregate = assertAggregateReview(await readJson(resolvePath(options.aggregate)));
+      if (!aggregate.ok) {
+        throw new Error(
+          `cannot render patch plan for invalid aggregate:\n${aggregate.findings.map((finding) => finding.message).join("\n")}`,
+        );
+      }
       await writeText(resolvePath(options.out), renderPatchPlan(graph, aggregate));
     });
   });
