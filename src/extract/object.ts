@@ -1,4 +1,5 @@
 import type { FieldNode, ModelNode, SourceSpan } from "../types.js";
+import { joinFieldPath } from "../field-path.js";
 
 type ObjectShape = {
   value: Record<string, unknown>;
@@ -74,7 +75,7 @@ function visitObject(
   nullablePaths: Set<string> = new Set(),
 ): void {
   for (const [name, child] of Object.entries(value)) {
-    const path = parentPath ? `${parentPath}.${name}` : name;
+    const path = joinFieldPath(parentPath, name);
     const arrayItem = arrayObjectShape(child);
     const objectLike = isRecord(child) || Boolean(arrayItem);
     fields.push({
@@ -180,7 +181,7 @@ function pathFactsForObjects(
   const optionalPaths = new Set<string>();
   const nullablePaths = new Set<string>();
   for (const [key, value] of Object.entries(shape)) {
-    const path = parentPath ? `${parentPath}.${key}` : key;
+    const path = joinFieldPath(parentPath, key);
     const presentValues = objects.filter((object) => key in object).map((object) => object[key]);
     const missingFromSomeObjects = presentValues.length !== objects.length;
     const nullableInSomeObjects = presentValues.some((item) => item === null);
@@ -225,7 +226,7 @@ function descendantPaths(value: unknown, parentPath: string): Set<string> {
   const paths = new Set<string>();
   if (isRecord(value)) {
     for (const [key, child] of Object.entries(value)) {
-      const path = parentPath ? `${parentPath}.${key}` : key;
+      const path = joinFieldPath(parentPath, key);
       paths.add(path);
       for (const descendant of descendantPaths(child, path)) {
         paths.add(descendant);

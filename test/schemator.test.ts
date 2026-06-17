@@ -72,6 +72,36 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts CommonMark backtick and tilde fences", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "proposal.md");
+      await writeFile(
+        source,
+        [
+          "````typescript",
+          "type BacktickPolicy = {",
+          "  promptRecipe?: string;",
+          "};",
+          "````",
+          "~~~json",
+          "{ \"properties\": { \"contextPosture\": { \"type\": \"string\" } } }",
+          "~~~",
+        ].join("\n"),
+      );
+
+      const graph = await extractGraph(source);
+
+      expect(graph.models.map((model) => model.id)).toEqual(["BacktickPolicy", "JsonBlock1"]);
+      expect(graph.models.flatMap((model) => model.fields.map((field) => field.path))).toEqual([
+        "promptRecipe",
+        "contextPosture",
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("renames promptRecipe and converges after simplification", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -750,6 +780,34 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts bare root JSON Schema refs", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          properties: {
+            child: { $ref: "#" },
+            name: { type: "string" },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual([
+        "child",
+        "child.child",
+        "child.name",
+        "name",
+      ]);
+      expect(graph.models[0]?.fields.map((field) => field.objectLike)).toEqual([true, false, false, false]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts Markdown JSONC fences", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -873,6 +931,33 @@ describe("schemator", () => {
       const graph = await extractGraph(source);
 
       expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["type", "name"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("escapes ordinary JSON field path separators", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "document.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          "a.b": 1,
+          "array[]": 2,
+          a: {
+            b: 3,
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.name])).toEqual([
+        ["a~1b", "a.b"],
+        ["array~2~3", "array[]"],
+        ["a", "a"],
+        ["a.b", "b"],
+      ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

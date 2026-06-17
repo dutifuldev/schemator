@@ -1,4 +1,5 @@
 import ts from "typescript";
+import { joinFieldPath } from "../field-path.js";
 import type { FieldNode, ModelKind, ModelNode, SourceSpan } from "../types.js";
 
 type Declaration =
@@ -282,7 +283,7 @@ function addPropertyField(
   if (!name) {
     return;
   }
-  const path = parentPath ? `${parentPath}.${name}` : name;
+  const path = joinFieldPath(parentPath, name);
   const typeNode = member.type;
   const type = typeNode?.getText(sourceFile) ?? "unknown";
   const typeCandidates = typeNode ? nonNullableTypeNodes(typeNode) : [];
@@ -356,7 +357,7 @@ function addPropertyFieldIfAbsent(
   if (!name) {
     return;
   }
-  const path = parentPath ? `${parentPath}.${name}` : name;
+  const path = joinFieldPath(parentPath, name);
   if (overrideExisting) {
     removeExistingPath(fields, path);
   }
@@ -417,7 +418,7 @@ function addMemberGroupsFields(
         ))
         .filter((candidate): candidate is ts.PropertySignature => Boolean(candidate));
       const required = occurrences.length === memberGroups.length && occurrences.every((candidate) => !candidate.questionToken);
-      const path = parentPath ? `${parentPath}.${name}` : name;
+      const path = joinFieldPath(parentPath, name);
       if (overrideExisting) {
         removeExistingPath(fields, path);
       }
@@ -481,7 +482,7 @@ function addUnionPropertyField(
   if (!name) {
     return;
   }
-  const path = parentPath ? `${parentPath}.${name}` : name;
+  const path = joinFieldPath(parentPath, name);
   const typeNodes = occurrences.flatMap((candidate) => candidate.type ? nonNullableTypeNodes(candidate.type) : []);
   const type = uniqueStrings(
     occurrences.map((candidate) => candidate.type?.getText(sourceFile) ?? "unknown"),

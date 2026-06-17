@@ -1,4 +1,5 @@
 import type { FieldNode, ModelNode, SourceSpan } from "../types.js";
+import { joinFieldPath } from "../field-path.js";
 
 type JsonSchemaLike = {
   title?: unknown;
@@ -135,7 +136,7 @@ function visitSchemaObject(
     const refSchema = typeof childSchema?.$ref === "string"
       ? resolveRefSchema(root, childSchema.$ref, refStack)
       : null;
-    const path = parentPath ? `${parentPath}.${name}` : name;
+    const path = joinFieldPath(parentPath, name);
     const type = schemaType(childSchema ?? child);
     const fieldRequired = ancestorRequired && required.has(name);
     const fieldNullable = Boolean(childSchema && hasSchemaType(childSchema, "null"));
@@ -301,6 +302,9 @@ function resolveRefSchema(root: unknown, ref: string, refStack: Set<string>): Re
 }
 
 function resolveLocalRef(root: unknown, ref: string): unknown | null {
+  if (ref === "#") {
+    return root;
+  }
   if (!ref.startsWith("#/")) {
     return null;
   }
