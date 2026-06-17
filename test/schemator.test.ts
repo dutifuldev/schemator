@@ -318,6 +318,30 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts primitive root JSON Schema array items", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          $schema: "https://json-schema.org/draft/2020-12/schema",
+          type: "array",
+          items: {
+            type: "string",
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.type, field.objectLike])).toEqual([
+        ["items", "string", false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts top-level JSON Schema refs", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -687,6 +711,31 @@ describe("schemator", () => {
       const graph = await extractGraph(source);
 
       expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["id"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("does not treat ordinary JSON properties bags as JSON Schema", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "document.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          id: "example",
+          properties: {
+            promptRecipe: "standard-v1",
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual([
+        "id",
+        "properties",
+        "properties.promptRecipe",
+      ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

@@ -133,7 +133,26 @@ function isJsonSchema(value: unknown): value is Record<string, unknown> {
     "items" in value;
   return (
     (hasSchemaMetadata && hasSchemaShape) ||
-    isRecord(value["properties"])
+    hasSchemaProperties(value["properties"])
+  );
+}
+
+function hasSchemaProperties(value: unknown): boolean {
+  return isRecord(value) && Object.values(value).some(isSchemaProperty);
+}
+
+function isSchemaProperty(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    typeof value["$ref"] === "string" ||
+    isSchemaType(value["type"]) ||
+    isRecord(value["properties"]) ||
+    Array.isArray(value["allOf"]) ||
+    Array.isArray(value["anyOf"]) ||
+    Array.isArray(value["oneOf"]) ||
+    "items" in value
   );
 }
 

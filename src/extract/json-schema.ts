@@ -66,6 +66,19 @@ function visitSchemaObject(
     if (schema && hasSchemaType(schema, "array")) {
       const rootItemSchema = itemObjectSchema(schema, root, refStack);
       if (!rootItemSchema) {
+        if (parentPath === "") {
+          const rootArrayNullable = hasSchemaType(schema, "null");
+          addField(fields, {
+            path: "items",
+            name: "items",
+            type: schemaType(schema.items),
+            required: true,
+            nullable: rootArrayNullable,
+            parent: modelId,
+            objectLike: false,
+            source,
+          });
+        }
         visitSchemaCombinators(schema, modelId, parentPath, fields, source, root, refStack, ancestorRequired);
         return;
       }
