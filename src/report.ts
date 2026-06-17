@@ -98,7 +98,10 @@ function finalPathForDecision(
   if (renameMap) {
     return applyRenameMapToPath(decision.fieldPath, renameMap);
   }
-  return decision.finalPath ?? decision.finalName;
+  if (decision.decision === "rename") {
+    return decision.finalPath ?? rawFinalPathForRename(decision);
+  }
+  return decision.finalPath ?? decision.fieldPath;
 }
 
 function rawFinalPathForRename(decision: AggregateReview["decisions"][number]): string {

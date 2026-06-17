@@ -1233,6 +1233,36 @@ describe("schemator", () => {
     }
   });
 
+  test("marks nested TypeScript fields optional when unions include scalar branches", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Event = {",
+          "  payload: {",
+          "    a: string;",
+          "  } | string;",
+          "  items: Array<{",
+          "    b: string;",
+          "  } | number>;",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
+        ["payload", true],
+        ["payload.a", false],
+        ["items", true],
+        ["items[].b", false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("uses AST nullish branches for TypeScript nullable metadata", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -1929,6 +1959,55 @@ describe("schemator", () => {
 
     expect(report).toContain("| `JsonSchema` | `config.recipe` | rename | `settings.variant` |");
     expect(report).toContain("| `settings.variant` | `string` | yes | no |");
+  });
+
+  test("reports full paths when non-rename reviews omit finalPath", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [
+            field("config", "config", "object", true),
+            field("config.token", "token", "string", false),
+          ],
+        },
+      ],
+    };
+    const aggregate: AggregateReview = {
+      schemaVersion: 1,
+      ok: true,
+      summary: {
+        totalFields: 2,
+        keep: 0,
+        rename: 0,
+        merge: 0,
+        derive: 0,
+        move: 0,
+        defer: 0,
+        remove: 1,
+        opaque: 1,
+      },
+      findings: [],
+      decisions: [
+        {
+          ...reviewWithoutFinalPath("config", "config"),
+          decision: "opaque",
+          ownerBoundary: "Config owner.",
+        },
+        {
+          ...reviewWithoutFinalPath("config.token", "token"),
+          decision: "remove",
+        },
+      ],
+    };
+    const report = renderReport(graph, aggregate, graph);
+
+    expect(report).toContain("| `JsonSchema` | `config.token` | remove | `config.token` |");
+    expect(report).not.toContain("| `JsonSchema` | `config.token` | remove | `token` |");
   });
 
   test("composes nested rename paths in patch plans", () => {
