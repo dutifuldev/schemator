@@ -541,6 +541,33 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts top-level ordinary JSON array object fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "document.json");
+      await writeFile(
+        source,
+        JSON.stringify([
+          {
+            id: "a",
+          },
+          {
+            promptRecipe: "standard-v1",
+          },
+        ]),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual([
+        "items",
+        "items[].id",
+        "items[].promptRecipe",
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts unioned ordinary JSON array object fields", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -597,6 +624,32 @@ describe("schemator", () => {
       expect(child?.objectLike).toBe(true);
       expect(child?.ref).toBe("Child");
       expect(child?.nullable).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps parenthesized nullable TypeScript model references object-like", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Child = { id: string };",
+          "type Parent = {",
+          "  child?: (Child | null);",
+          "  children?: (Array<Child> | null);",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+      const parent = graph.models.find((model) => model.id === "Parent");
+
+      expect(parent?.fields.map((field) => [field.path, field.objectLike, field.ref, field.nullable])).toEqual([
+        ["child", true, "Child", true],
+        ["children", true, "Child", true],
+      ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

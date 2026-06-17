@@ -117,8 +117,8 @@ function addPropertyField(
   const path = parentPath ? `${parentPath}.${name}` : name;
   const typeNode = member.type;
   const type = typeNode?.getText(sourceFile) ?? "unknown";
-  const ref = referencedModel(type, modelNames);
   const typeCandidates = typeNode ? nonNullableTypeNodes(typeNode) : [];
+  const ref = referencedModelFromTypeCandidates(typeCandidates, sourceFile, modelNames) ?? referencedModel(type, modelNames);
   const inlineObjectType = typeCandidates.find((candidate) => ts.isTypeLiteralNode(candidate)) as
     | ts.TypeLiteralNode
     | undefined;
@@ -212,6 +212,20 @@ function referencedModel(typeText: string, modelNames: Set<string>): string | nu
     }
     if (modelNames.has(candidate)) {
       return candidate;
+    }
+  }
+  return null;
+}
+
+function referencedModelFromTypeCandidates(
+  candidates: ts.TypeNode[],
+  sourceFile: ts.SourceFile,
+  modelNames: Set<string>,
+): string | null {
+  for (const candidate of candidates) {
+    const ref = referencedModel(candidate.getText(sourceFile), modelNames);
+    if (ref) {
+      return ref;
     }
   }
   return null;

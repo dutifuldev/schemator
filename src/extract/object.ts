@@ -4,6 +4,21 @@ export function extractObjectModel(value: unknown, modelId: string, source: Sour
   const fields: FieldNode[] = [];
   if (isRecord(value)) {
     visitObject(value, modelId, "", fields, source);
+  } else {
+    const arrayItem = arrayObjectShape(value);
+    if (arrayItem) {
+      fields.push({
+        path: "items",
+        name: "items",
+        type: "array",
+        required: true,
+        nullable: false,
+        parent: modelId,
+        objectLike: true,
+        source,
+      });
+      visitObject(arrayItem, modelId, "items[]", fields, source);
+    }
   }
   return {
     id: modelId,
