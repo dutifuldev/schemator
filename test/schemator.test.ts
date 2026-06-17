@@ -500,6 +500,25 @@ describe("schemator", () => {
     }
   });
 
+  test("does not treat ordinary JSON schema metadata as JSON Schema", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "document.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          $schema: "https://example.com/schema.json",
+          promptRecipe: "standard-v1",
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["$schema", "promptRecipe"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("does not treat ordinary JSON type field as JSON Schema", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -785,6 +804,24 @@ describe("schemator", () => {
     }
   });
 
+  test("run fails when max iterations stop before convergence", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      const runDir = join(dir, "run");
+      await writeFile(source, ["type ModelProfilePolicy = {", "  promptRecipe?: string;", "};"].join("\n"));
+
+      await expect(
+        execFileAsync(tsxBin(), ["src/cli.ts", "run", "--source", source, "--out", runDir, "--max-iterations", "1"], {
+          cwd: process.cwd(),
+        }),
+      ).rejects.toMatchObject({ code: 2 });
+      await expect(readFile(join(runDir, "run-summary.json"), "utf8")).resolves.toContain('"stable": false');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("rejects simplification rename collisions", () => {
     const graph: ModelGraph = {
       schemaVersion: 1,
@@ -856,6 +893,43 @@ describe("schemator", () => {
     expect(aggregate.ok).toBe(false);
     expect(aggregate.findings.map((finding) => finding.message).join("\n")).toContain(
       "duplicate field path JsonSchema.variant",
+    );
+  });
+
+  test("rejects unsupported merge and move decisions during aggregation", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [
+            field("source", "source", "string", false),
+            field("target", "target", "string", false),
+          ],
+        },
+      ],
+    };
+
+    const aggregate = aggregateReviews(graph, [
+      {
+        ...reviewWithoutFinalPath("source", "target"),
+        decision: "merge",
+      },
+      {
+        ...reviewWithoutFinalPath("target", "renamedTarget"),
+        decision: "move",
+      },
+    ]);
+
+    expect(aggregate.ok).toBe(false);
+    expect(aggregate.findings.map((finding) => finding.message)).toEqual(
+      expect.arrayContaining([
+        "Decision merge is not supported by the v1 graph reducer.",
+        "Decision move is not supported by the v1 graph reducer.",
+      ]),
     );
   });
 

@@ -85,6 +85,14 @@ export function aggregateReviews(graph: ModelGraph, reviews: FieldReview[]): Agg
     if (duplicateKeys.has(key)) {
       continue;
     }
+    if (review.decision === "merge" || review.decision === "move") {
+      findings.push({
+        severity: "error",
+        model: review.model,
+        fieldPath: review.fieldPath,
+        message: `Decision ${review.decision} is not supported by the v1 graph reducer.`,
+      });
+    }
     if (!fieldKeys.has(key)) {
       findings.push({
         severity: "error",

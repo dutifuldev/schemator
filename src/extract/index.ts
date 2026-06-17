@@ -120,9 +120,16 @@ function isJsonSchema(value: unknown): value is Record<string, unknown> {
   if (!isRecord(value)) {
     return false;
   }
+  const hasSchemaMetadata = typeof value["$schema"] === "string" || typeof value["$id"] === "string";
+  const hasSchemaShape =
+    typeof value["$ref"] === "string" ||
+    isSchemaType(value["type"]) ||
+    isRecord(value["properties"]) ||
+    isRecord(value["$defs"]) ||
+    isRecord(value["definitions"]) ||
+    "items" in value;
   return (
-    typeof value["$schema"] === "string" ||
-    typeof value["$id"] === "string" ||
+    (hasSchemaMetadata && hasSchemaShape) ||
     (isRecord(value["properties"]) && (isSchemaType(value["type"]) || Array.isArray(value["required"])))
   );
 }

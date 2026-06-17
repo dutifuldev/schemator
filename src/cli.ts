@@ -206,6 +206,9 @@ program
           `aggregate validation failed at iteration ${stableIteration}: ${invalidAggregate.findings.map((finding) => finding.message).join("; ")}`,
         );
       }
+      if (lastAggregate && hasSimplification(lastAggregate)) {
+        throw new Error(`run stopped before convergence after ${stableIteration} iteration(s)`);
+      }
     });
   });
 
