@@ -3,7 +3,7 @@ import type { AggregateReview, FieldNode, FieldReview, ModelGraph } from "./type
 const simplifyingDecisions = new Set(["rename", "merge", "derive", "move", "defer", "remove"]);
 
 export function hasSimplification(aggregate: AggregateReview): boolean {
-  return aggregate.decisions.some((review) => review.confidence !== "low" && simplifyingDecisions.has(review.decision));
+  return aggregate.decisions.some((review) => review.confidence !== "low" && isGraphChangingSimplification(review));
 }
 
 export function applyAggregateToGraph(graph: ModelGraph, aggregate: AggregateReview): ModelGraph {
@@ -55,6 +55,16 @@ function isRemoved(path: string, removed: Set<string>): boolean {
     }
   }
   return false;
+}
+
+function isGraphChangingSimplification(review: FieldReview): boolean {
+  if (!simplifyingDecisions.has(review.decision)) {
+    return false;
+  }
+  if (review.decision === "rename") {
+    return finalPathForRename(review) !== review.fieldPath;
+  }
+  return true;
 }
 
 function finalPathForRename(decision: FieldReview): string {

@@ -2797,6 +2797,30 @@ describe("schemator", () => {
     );
   });
 
+  test("does not treat no-op rename reviews as simplifications", () => {
+    const aggregate: AggregateReview = {
+      schemaVersion: 1,
+      ok: true,
+      summary: {
+        totalFields: 1,
+        keep: 0,
+        rename: 1,
+        merge: 0,
+        derive: 0,
+        move: 0,
+        defer: 0,
+        remove: 0,
+        opaque: 0,
+      },
+      findings: [],
+      decisions: [
+        review("promptRecipe", "promptRecipe"),
+      ],
+    };
+
+    expect(hasSimplification(aggregate)).toBe(false);
+  });
+
   test("composes parent and child renames", () => {
     const graph: ModelGraph = {
       schemaVersion: 1,
