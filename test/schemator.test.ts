@@ -2262,8 +2262,9 @@ describe("schemator", () => {
       });
 
       const report = await readFile(reportPath, "utf8");
+      expect(report).toContain("- Renamed: 1");
+      expect(report).toContain("| `T` | `recipe` | rename | `variant` |");
       expect(report).toContain("| `T` | `variant` | keep | `variant` |");
-      expect(report).not.toContain("| `T` | `recipe` | rename | `variant` |");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -2382,8 +2383,9 @@ describe("schemator", () => {
       });
       const report = await readFile(join(runDir, "final-report.md"), "utf8");
 
+      expect(report).toContain("- Renamed: 1");
+      expect(report).toContain("| `ModelProfilePolicy` | `promptRecipe` | rename | `systemPromptVariant` |");
       expect(report).toContain("| `ModelProfilePolicy` | `systemPromptVariant` | keep |");
-      expect(report).not.toContain("| `ModelProfilePolicy` | `promptRecipe` | rename |");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

@@ -135,7 +135,9 @@ program
     await runCommand(async () => {
       const paths = await reportPaths(options);
       const graph = assertModelGraph(await readJson(paths.graph));
-      const aggregate = assertAggregateReview(await readJson(paths.aggregate));
+      const aggregate = paths.aggregatePaths
+        ? combineAggregates(await Promise.all(paths.aggregatePaths.map(readAggregate)))
+        : await readAggregate(paths.aggregate);
       const hasFinalGraph = paths.finalGraph ? await pathExists(paths.finalGraph) : false;
       const finalGraph = paths.finalGraph && hasFinalGraph
         ? assertModelGraph(await readJson(paths.finalGraph))
@@ -166,6 +168,7 @@ program
       let graph: ModelGraph = initialGraph;
       let lastAggregate: AggregateReview | null = null;
       let invalidAggregate: AggregateReview | null = null;
+      const aggregates: AggregateReview[] = [];
       let stableIteration = 0;
 
       for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
@@ -186,6 +189,7 @@ program
         await writeJson(aggregatePath, aggregate);
         await writeText(join(out, `patch.iteration-${iteration}.md`), renderPatchPlan(graph, aggregate));
         lastAggregate = aggregate;
+        aggregates.push(aggregate);
         stableIteration = iteration;
 
         if (!aggregate.ok) {
@@ -200,7 +204,7 @@ program
 
       await writeJson(join(out, "graph.final.json"), graph);
       if (lastAggregate) {
-        await writeText(join(out, "final-report.md"), renderReport(initialGraph, lastAggregate, graph));
+        await writeText(join(out, "final-report.md"), renderReport(initialGraph, combineAggregates(aggregates), graph));
       }
       await writeText(
         join(out, "run-summary.json"),
@@ -287,17 +291,23 @@ async function aggregateFromFiles(graphPath: string, reviewsDir: string): Promis
   return aggregate;
 }
 
+async function readAggregate(path: string): Promise<AggregateReview> {
+  return assertAggregateReview(await readJson(path));
+}
+
 async function reportPaths(options: { run?: string; graph?: string; aggregate?: string }): Promise<{
   graph: string;
   aggregate: string;
+  aggregatePaths?: string[];
   finalGraph?: string;
 }> {
   if (options.run) {
     const runDir = resolvePath(options.run);
     const iteration = await currentRunIteration(runDir);
     return {
-      graph: join(runDir, `graph.iteration-${iteration}.json`),
+      graph: join(runDir, "graph.iteration-1.json"),
       aggregate: join(runDir, `aggregate.iteration-${iteration}.json`),
+      aggregatePaths: aggregatePathsThrough(runDir, iteration),
       finalGraph: join(runDir, "graph.final.json"),
     };
   }
@@ -307,6 +317,40 @@ async function reportPaths(options: { run?: string; graph?: string; aggregate?: 
   return {
     graph: resolvePath(options.graph),
     aggregate: resolvePath(options.aggregate),
+  };
+}
+
+function aggregatePathsThrough(runDir: string, iteration: number): string[] {
+  return Array.from({ length: iteration }, (_, index) => join(runDir, `aggregate.iteration-${index + 1}.json`));
+}
+
+function combineAggregates(aggregates: AggregateReview[]): AggregateReview {
+  const summary = emptySummary();
+  for (const aggregate of aggregates) {
+    for (const decision of Object.keys(summary) as Array<keyof typeof summary>) {
+      summary[decision] += aggregate.summary[decision];
+    }
+  }
+  return {
+    schemaVersion: 1,
+    ok: aggregates.every((aggregate) => aggregate.ok),
+    summary,
+    decisions: aggregates.flatMap((aggregate) => aggregate.decisions),
+    findings: aggregates.flatMap((aggregate) => aggregate.findings),
+  };
+}
+
+function emptySummary(): AggregateReview["summary"] {
+  return {
+    totalFields: 0,
+    keep: 0,
+    rename: 0,
+    merge: 0,
+    derive: 0,
+    move: 0,
+    defer: 0,
+    remove: 0,
+    opaque: 0,
   };
 }
 
