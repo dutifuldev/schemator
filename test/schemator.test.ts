@@ -194,6 +194,33 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts top-level JSON Schema refs", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          $schema: "https://json-schema.org/draft/2020-12/schema",
+          $ref: "#/$defs/Profile",
+          $defs: {
+            Profile: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+              },
+            },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["id"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("detects YAML JSON Schema documents", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -338,6 +365,41 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts JSON Schema refs to array schemas", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          properties: {
+            children: {
+              $ref: "#/$defs/ChildList",
+            },
+          },
+          $defs: {
+            ChildList: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                },
+              },
+            },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["children", "children[].id"]);
+      expect(graph.models[0]?.fields[0]?.objectLike).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("bounds recursive JSON Schema local refs", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -386,6 +448,28 @@ describe("schemator", () => {
       const graph = await extractGraph(source);
 
       expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["promptRecipe"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("extracts Markdown fences with info strings", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "proposal.md");
+      await writeFile(
+        source,
+        [
+          "```ts title=\"schema.ts\"",
+          "type Profile = {",
+          "  id: string;",
+          "};",
+          "```",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["id"]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

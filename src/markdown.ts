@@ -15,7 +15,7 @@ export function fencedCodeBlocks(text: string): MarkdownBlock[] {
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index] ?? "";
-    const fence = /^```([A-Za-z0-9_-]*)\s*$/.exec(line);
+    const fence = /^```([A-Za-z0-9_-]*)(?:\s+.*)?$/.exec(line);
     if (fence && !inFence) {
       inFence = true;
       language = fence[1]?.toLowerCase() ?? "";

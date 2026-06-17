@@ -39,10 +39,29 @@ function visitSchemaObject(
   refStack: Set<string>,
 ): void {
   const schema = asSchema(value);
+  if (typeof schema?.$ref === "string") {
+    const refSchema = resolveRefSchema(root, schema.$ref, refStack);
+    if (refSchema) {
+      visitSchemaObject(refSchema.value, modelId, parentPath, fields, source, root, withRef(refStack, refSchema.ref));
+    }
+    return;
+  }
   if (!schema || !isRecord(schema.properties)) {
-    if (schema && parentPath === "" && hasSchemaType(schema, "array")) {
+    if (schema && hasSchemaType(schema, "array")) {
       const rootItemSchema = itemObjectSchema(schema, root, refStack);
       if (!rootItemSchema) {
+        return;
+      }
+      if (parentPath !== "") {
+        visitSchemaObject(
+          rootItemSchema.value,
+          modelId,
+          `${parentPath}[]`,
+          fields,
+          source,
+          root,
+          withRef(refStack, rootItemSchema.ref),
+        );
         return;
       }
       fields.push({
@@ -85,7 +104,7 @@ function visitSchemaObject(
       ? itemObjectSchema(childSchema, root, refStack)
       : null;
     const objectLike =
-      Boolean(refSchema) ||
+      Boolean(refSchema && hasNestedSchema(refSchema.value, root, withRef(refStack, refSchema.ref))) ||
       Boolean(childSchema && hasSchemaType(childSchema, "object")) ||
       isRecord(childSchema?.properties) ||
       Boolean(itemSchema);
@@ -127,6 +146,18 @@ function itemObjectSchema(schema: JsonSchemaLike, root: unknown, refStack: Set<s
   return null;
 }
 
+function hasNestedSchema(value: unknown, root: unknown, refStack: Set<string>): boolean {
+  const schema = asSchema(value);
+  if (!schema) {
+    return false;
+  }
+  if (typeof schema.$ref === "string") {
+    const refSchema = resolveRefSchema(root, schema.$ref, refStack);
+    return Boolean(refSchema && hasNestedSchema(refSchema.value, root, withRef(refStack, refSchema.ref)));
+  }
+  return isRecord(schema.properties) || hasSchemaType(schema, "object") || Boolean(itemObjectSchema(schema, root, refStack));
+}
+
 function schemaType(value: unknown): string {
   const schema = asSchema(value);
   if (!schema) {
@@ -164,7 +195,7 @@ function resolveRefSchema(root: unknown, ref: string, refStack: Set<string>): Re
   }
   const value = resolveLocalRef(root, ref);
   const schema = asSchema(value);
-  if (!schema || !isRecord(schema.properties)) {
+  if (!schema) {
     return null;
   }
   return { value, ref };
