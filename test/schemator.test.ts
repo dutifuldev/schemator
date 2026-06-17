@@ -874,6 +874,77 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts JSON Schema array item combinator fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          properties: {
+            items: {
+              type: "array",
+              items: {
+                anyOf: [
+                  {
+                    type: "object",
+                    required: ["id"],
+                    properties: {
+                      id: { type: "string" },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
+        ["items", false],
+        ["items[].id", false],
+      ]);
+      expect(graph.models[0]?.fields[0]?.objectLike).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("extracts root JSON Schema array item combinator fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "array",
+          items: {
+            allOf: [
+              {
+                type: "object",
+                required: ["id"],
+                properties: {
+                  id: { type: "string" },
+                },
+              },
+            ],
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
+        ["items", true],
+        ["items[].id", true],
+      ]);
+      expect(graph.models[0]?.fields[0]?.objectLike).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts JSON Schema refs to array schemas", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {

@@ -286,17 +286,32 @@ function addField(fields: FieldNode[], field: FieldNode): void {
 
 function itemObjectSchema(schema: JsonSchemaLike, root: unknown, refStack: Set<string>): ResolvedSchema | null {
   const items = schema.items;
-  const itemSchema = asSchema(items);
-  if (!itemSchema) {
-    return null;
-  }
-  if (typeof itemSchema.$ref === "string") {
-    return resolveRefSchema(root, itemSchema.$ref, refStack);
-  }
-  if (hasSchemaType(itemSchema, "object") || isRecord(itemSchema.properties)) {
+  if (hasObjectSchemaShape(items, root, refStack)) {
     return { value: items };
   }
   return null;
+}
+
+function hasObjectSchemaShape(value: unknown, root: unknown, refStack: Set<string>): boolean {
+  const schema = asSchema(value);
+  if (!schema) {
+    return false;
+  }
+  if (typeof schema.$ref === "string") {
+    if (refStack.has(schema.$ref)) {
+      return true;
+    }
+    const refSchema = resolveRefSchema(root, schema.$ref, refStack);
+    return Boolean(refSchema && hasObjectSchemaShape(refSchema.value, root, withRef(refStack, refSchema.ref)));
+  }
+  return (
+    hasSchemaType(schema, "object") ||
+    isRecord(schema.properties) ||
+    schemaArray(schema.allOf).some((item) => hasObjectSchemaShape(item, root, refStack)) ||
+    [...schemaArray(schema.anyOf), ...schemaArray(schema.oneOf)].some((item) =>
+      hasObjectSchemaShape(item, root, refStack)
+    )
+  );
 }
 
 function hasNestedSchema(value: unknown, root: unknown, refStack: Set<string>): boolean {
