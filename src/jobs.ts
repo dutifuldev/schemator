@@ -12,7 +12,7 @@ export async function writeReviewJobs(graph: ModelGraph, outputDir: string): Pro
   }
 }
 
-function renderFieldPrompt(graph: ModelGraph, model: ModelNode, field: FieldNode): string {
+export function renderFieldPrompt(graph: ModelGraph, model: ModelNode, field: FieldNode): string {
   return [
     "# Schemator Field Review",
     "",

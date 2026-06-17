@@ -27,6 +27,7 @@ The target workflow is:
 schemator extract --source schema.ts --out .schemator/graph.iteration-1.json
 schemator create-jobs --graph .schemator/graph.iteration-1.json --out .schemator/jobs.iteration-1
 schemator review --graph .schemator/graph.iteration-1.json --out .schemator/reviews.iteration-1
+schemator review --strategy codex --graph .schemator/graph.iteration-1.json --out .schemator/reviews.iteration-1
 schemator aggregate --graph .schemator/graph.iteration-1.json --reviews .schemator/reviews.iteration-1 --out .schemator/aggregate.iteration-1.json
 schemator apply --graph .schemator/graph.iteration-1.json --aggregate .schemator/aggregate.iteration-1.json --out .schemator/patch.iteration-1.md
 schemator report --run .schemator --out .schemator/final-report.md
@@ -36,7 +37,13 @@ End-to-end:
 
 ```bash
 schemator run --source schema.ts --out .schemator
+schemator run --strategy codex --source schema.ts --out .schemator
 ```
+
+`lindy` is the default review strategy. It is deterministic and useful for fast
+local convergence checks. `codex` starts one independent `codex exec` reviewer
+per field, constrains it with `schemas/field-review.schema.json`, and validates
+each returned review before writing it.
 
 ## Current Status
 
@@ -47,6 +54,7 @@ This repository contains the first TypeScript implementation. It supports:
 - normalized field graphs
 - independent field-review prompt generation
 - deterministic Lindy-style field review
+- Codex-backed independent field review with `--strategy codex`
 - aggregate coverage validation
 - in-memory simplification until stable
 - patch-plan and Markdown report generation

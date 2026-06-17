@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { Command } from "commander";
 import { aggregateReviews, readReviews } from "./aggregate.js";
 import { renderPatchPlan } from "./apply.js";
+import { writeCodexReviews } from "./codex-review.js";
 import { extractGraph } from "./extract/index.js";
 import { readJson, resolvePath, writeJson, writeText } from "./files.js";
 import { applyAggregateToGraph, hasSimplification } from "./graph.js";
@@ -52,16 +53,20 @@ program
   .requiredOption("--out <dir>", "review output directory")
   .option("--jobs <dir>", "also write independent field-review prompts")
   .option("--strategy <name>", "review strategy", "lindy")
-  .action(async (options: { graph: string; out: string; jobs?: string; strategy: string }) => {
+  .option("--codex-command <path>", "Codex executable for --strategy codex", "codex")
+  .option("--codex-model <name>", "Codex model for --strategy codex")
+  .option("--codex-timeout-ms <n>", "per-field Codex timeout in milliseconds", "120000")
+  .action(async (options: ReviewCommandOptions) => {
     await runCommand(async () => {
       const graph = assertModelGraph(await readJson(resolvePath(options.graph)));
-      if (options.strategy !== "lindy") {
-        throw new Error(`unsupported review strategy: ${options.strategy}`);
-      }
       if (options.jobs) {
         await writeReviewJobs(graph, resolvePath(options.jobs));
       }
-      const reviews = await writeDeterministicReviews(graph, resolvePath(options.out), { strategy: "lindy" });
+      const reviews = options.strategy === "codex"
+        ? await writeCodexReviews(graph, resolvePath(options.out), codexOptions(options))
+        : options.strategy === "lindy"
+          ? await writeDeterministicReviews(graph, resolvePath(options.out), { strategy: "lindy" })
+          : unsupportedStrategy(options.strategy);
       for (const review of reviews) {
         const validation = validateFieldReview(review);
         if (!validation.ok) {
@@ -144,7 +149,11 @@ program
   .requiredOption("--source <path>", "schema or proposal source")
   .requiredOption("--out <dir>", "run output directory")
   .option("--max-iterations <n>", "maximum simplification iterations", "4")
-  .action(async (options: { source: string; out: string; maxIterations: string }) => {
+  .option("--strategy <name>", "review strategy", "lindy")
+  .option("--codex-command <path>", "Codex executable for --strategy codex", "codex")
+  .option("--codex-model <name>", "Codex model for --strategy codex")
+  .option("--codex-timeout-ms <n>", "per-field Codex timeout in milliseconds", "120000")
+  .action(async (options: RunCommandOptions) => {
     await runCommand(async () => {
       const source = resolvePath(options.source);
       const out = resolvePath(options.out);
@@ -167,7 +176,13 @@ program
         const aggregatePath = join(out, `aggregate.iteration-${iteration}.json`);
         await writeJson(graphPath, graph);
         await writeReviewJobs(graph, jobsDir);
-        await writeDeterministicReviews(graph, reviewsDir, { strategy: "lindy" });
+        if (options.strategy === "codex") {
+          await writeCodexReviews(graph, reviewsDir, codexOptions(options));
+        } else if (options.strategy === "lindy") {
+          await writeDeterministicReviews(graph, reviewsDir, { strategy: "lindy" });
+        } else {
+          unsupportedStrategy(options.strategy);
+        }
         const aggregate = await aggregateFromFiles(graphPath, reviewsDir);
         if (!firstAggregate) {
           firstAggregate = aggregate;
@@ -218,6 +233,46 @@ program
   });
 
 await program.parseAsync();
+
+type ReviewCommandOptions = {
+  graph: string;
+  out: string;
+  jobs?: string;
+  strategy: string;
+  codexCommand: string;
+  codexModel?: string;
+  codexTimeoutMs: string;
+};
+
+type RunCommandOptions = {
+  source: string;
+  out: string;
+  maxIterations: string;
+  strategy: string;
+  codexCommand: string;
+  codexModel?: string;
+  codexTimeoutMs: string;
+};
+
+function codexOptions(options: Pick<ReviewCommandOptions, "codexCommand" | "codexModel" | "codexTimeoutMs">): {
+  command: string;
+  model?: string;
+  timeoutMs: number;
+} {
+  const timeoutMs = Number.parseInt(options.codexTimeoutMs, 10);
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
+    throw new Error("--codex-timeout-ms must be a positive integer");
+  }
+  return {
+    command: options.codexCommand,
+    ...(options.codexModel ? { model: options.codexModel } : {}),
+    timeoutMs,
+  };
+}
+
+function unsupportedStrategy(strategy: string): never {
+  throw new Error(`unsupported review strategy: ${strategy}`);
+}
 
 async function aggregateFromFiles(graphPath: string, reviewsDir: string): Promise<AggregateReview> {
   const graph = assertModelGraph(await readJson(graphPath));

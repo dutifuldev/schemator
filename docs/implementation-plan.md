@@ -344,7 +344,11 @@ drift.
 - Support JSON Schema files plus Markdown fenced TypeScript, JSON, and YAML
   blocks first.
 - Generate one standalone Lindy review prompt per extracted field so external
-  Codex or agent runners can consume stable jobs later.
+  Codex or agent runners can consume stable jobs.
+- Support a Codex-backed review strategy that starts one independent
+  `codex exec` reviewer per field, constrains the final answer with
+  `schemas/field-review.schema.json`, and validates every returned review before
+  aggregation.
 - Include a deterministic local Lindy reviewer as the first runnable backend so
   extraction, coverage validation, aggregation, report generation, and
   convergence can be tested without external agent sessions.
@@ -362,9 +366,8 @@ drift.
 
 ## Remaining Design Questions
 
-- Should a future real-agent runner spawn Codex directly, use ACP-compatible
-  runners, or consume the generated prompt jobs through a generic command
-  adapter?
+- Should ACP-compatible runners share the Codex command adapter, or should they
+  consume the generated prompt jobs through a separate backend?
 - Should low-confidence keep/remove decisions trigger automatic second opinions?
 - What is the smallest structured requirements format that can let Schemator
   verify final schema sufficiency without turning into a product spec language?

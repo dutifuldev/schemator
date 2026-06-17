@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, test } from "vitest";
 import { aggregateReviews } from "../src/aggregate.js";
 import { renderPatchPlan } from "../src/apply.js";
+import { writeCodexReviews } from "../src/codex-review.js";
 import { extractGraph } from "../src/extract/index.js";
 import { pathToFileNamePart } from "../src/files.js";
 import { applyAggregateToGraph, hasSimplification } from "../src/graph.js";
@@ -104,6 +105,77 @@ describe("schemator", () => {
       expect(secondAggregate.decisions.find((review) => review.fieldPath === "systemPromptVariant")?.decision).toBe(
         "keep",
       );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("runs codex review strategy through one external reviewer per field", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const fakeCodex = join(dir, "fake-codex.js");
+      const reviewsDir = join(dir, "reviews");
+      await writeFile(
+        fakeCodex,
+        [
+          "#!/usr/bin/env node",
+          "let prompt = '';",
+          "process.stdin.setEncoding('utf8');",
+          "process.stdin.on('data', (chunk) => { prompt += chunk; });",
+          "process.stdin.on('end', () => {",
+          "  const model = /- Model: `([^`]+)`/.exec(prompt)?.[1] ?? 'Unknown';",
+          "  const fieldPath = /- Field path: `([^`]+)`/.exec(prompt)?.[1] ?? 'unknown';",
+          "  const fieldName = /- Field name: `([^`]+)`/.exec(prompt)?.[1] ?? fieldPath;",
+          "  const finalName = fieldName === 'promptRecipe' ? 'systemPromptVariant' : fieldName;",
+          "  console.log(JSON.stringify({",
+          "    schemaVersion: 1,",
+          "    model,",
+          "    fieldPath,",
+          "    decision: finalName === fieldName ? 'keep' : 'rename',",
+          "    finalName,",
+          "    finalType: 'string',",
+          "    required: false,",
+          "    rationale: 'Fake reviewer received the Lindy field prompt.',",
+          "    alternatives: [finalName, 'remove'],",
+          "    simplestChoice: finalName,",
+          "    confidence: 'high',",
+          "    questions: []",
+          "  }));",
+          "});",
+        ].join("\n"),
+      );
+      await chmod(fakeCodex, 0o755);
+      const graph: ModelGraph = {
+        schemaVersion: 1,
+        source: { path: "schema.ts", revision: null },
+        models: [
+          {
+            id: "Policy",
+            kind: "object",
+            source: { path: "schema.ts", span: { startLine: 1, endLine: 3 } },
+            fields: [
+              {
+                path: "promptRecipe",
+                name: "promptRecipe",
+                type: "string",
+                required: false,
+                nullable: false,
+                parent: "Policy",
+                objectLike: false,
+                source: { path: "schema.ts", span: { startLine: 2, endLine: 2 } },
+              },
+            ],
+          },
+        ],
+      };
+
+      const reviews = await writeCodexReviews(graph, reviewsDir, { command: fakeCodex, timeoutMs: 5_000 });
+      const reviewFiles = await readdirFileNames(reviewsDir);
+
+      expect(reviews).toHaveLength(1);
+      expect(reviews[0]?.decision).toBe("rename");
+      expect(reviews[0]?.finalName).toBe("systemPromptVariant");
+      expect(reviewFiles).toHaveLength(1);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -2578,4 +2650,10 @@ function reviewWithoutFinalPath(fieldPath: string, finalName: string) {
 
 function tsxBin(): string {
   return join(process.cwd(), "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
+}
+
+async function readdirFileNames(path: string): Promise<string[]> {
+  return (await readdir(path, { withFileTypes: true }))
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name);
 }
