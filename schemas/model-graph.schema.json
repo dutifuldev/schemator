@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dutifuldev.github.io/schemator/schemas/model-graph.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "source", "models"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "source": { "$ref": "#/$defs/sourceFile" },
+    "models": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/model" }
+    }
+  },
+  "$defs": {
+    "sourceFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string" },
+        "revision": { "type": ["string", "null"] }
+      }
+    },
+    "span": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startLine", "endLine"],
+      "properties": {
+        "startLine": { "type": "integer", "minimum": 1 },
+        "endLine": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "sourceSpan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "span"],
+      "properties": {
+        "path": { "type": "string" },
+        "span": { "$ref": "#/$defs/span" }
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "source", "fields"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["object", "table", "enum", "array", "scalar"] },
+        "source": { "$ref": "#/$defs/sourceSpan" },
+        "fields": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/field" }
+        }
+      }
+    },
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "name",
+        "type",
+        "required",
+        "nullable",
+        "parent",
+        "objectLike",
+        "source"
+      ],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "type": { "type": "string" },
+        "required": { "type": "boolean" },
+        "nullable": { "type": "boolean" },
+        "parent": { "type": "string", "minLength": 1 },
+        "objectLike": { "type": "boolean" },
+        "ref": { "type": "string" },
+        "source": { "$ref": "#/$defs/sourceSpan" }
+      }
+    }
+  }
+}

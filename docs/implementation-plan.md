@@ -333,13 +333,29 @@ Agents must not finalize while validation reports missing reviews, unreviewed
 nested fields, unresolved simplification recommendations, or schema/report
 drift.
 
-## Open Design Questions
+## V1 Implementation Decisions
 
-- Which extractor should ship first: JSON Schema, TypeScript, or SQL?
-- Should review sub-runs be spawned through Codex sessions, local worker agents,
-  GitHub PR comments, or a generic command adapter?
+- Ship a TypeScript CLI on Node 22.
+- Support JSON Schema files plus Markdown fenced TypeScript, JSON, and YAML
+  blocks first.
+- Generate one standalone Lindy review prompt per extracted field so external
+  Codex or agent runners can consume stable jobs later.
+- Include a deterministic local Lindy reviewer as the first runnable backend so
+  extraction, coverage validation, aggregation, report generation, and
+  convergence can be tested without external agent sessions.
+- Keep source editing as a patch-plan/report artifact in v1. The reducer applies
+  simplifications to the normalized graph so the run can converge, but it does
+  not rewrite source files yet.
+- Treat requirements verification as a future structured contract. V1 validates
+  field-review coverage and convergence; human review still owns whether the
+  simplified model satisfies product requirements.
+
+## Remaining Design Questions
+
+- Should a future real-agent runner spawn Codex directly, use ACP-compatible
+  runners, or consume the generated prompt jobs through a generic command
+  adapter?
 - Should low-confidence keep/remove decisions trigger automatic second opinions?
-- How should requirements be represented so the reducer can verify the final
-  schema still satisfies them?
-- How much of the apply step should be automated versus patch-proposed for
-  human/agent review?
+- What is the smallest structured requirements format that can let Schemator
+  verify final schema sufficiency without turning into a product spec language?
+- Which source formats should get source-rewrite support first?

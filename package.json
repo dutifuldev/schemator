@@ -1,0 +1,51 @@
+{
+  "name": "schemator",
+  "version": "0.1.0",
+  "description": "Extract, challenge, and simplify data models until stable.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dutifuldev/schemator.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dutifuldev/schemator/issues"
+  },
+  "homepage": "https://github.com/dutifuldev/schemator#readme",
+  "keywords": [
+    "schema",
+    "data-model",
+    "cli",
+    "agents",
+    "review"
+  ],
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "bin": {
+    "schemator": "dist/cli.js"
+  },
+  "files": [
+    "dist/**",
+    "schemas/**",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "npm run typecheck && npm test && npm run build",
+    "dev": "tsx src/cli.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "commander": "^14.0.3",
+    "typescript": "^5.9.3",
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "tsx": "^4.22.0",
+    "vitest": "^4.1.9"
+  }
+}
