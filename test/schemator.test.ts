@@ -223,6 +223,47 @@ describe("schemator", () => {
     }
   });
 
+  test("does not treat ordinary JSON type field as JSON Schema", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "document.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          name: "Profile",
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["type", "name"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("extracts ordinary JSON array object fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "document.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          items: [
+            {
+              id: "a",
+            },
+          ],
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["items", "items[].id"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("keeps nullable TypeScript model references object-like", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -245,6 +286,36 @@ describe("schemator", () => {
       expect(child?.objectLike).toBe(true);
       expect(child?.ref).toBe("Child");
       expect(child?.nullable).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("extracts nullable TypeScript inline object unions", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Cart = {",
+          "  item?: {",
+          "    id: string;",
+          "  } | null;",
+          "  items?: {",
+          "    sku: string;",
+          "  }[] | null;",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual([
+        "item",
+        "item.id",
+        "items",
+        "items[].sku",
+      ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -317,6 +388,49 @@ describe("schemator", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  test("rejects simplification rename collisions", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [
+            field("recipe", "recipe", "string", false),
+            field("variant", "variant", "string", false),
+          ],
+        },
+      ],
+    };
+    const aggregate: AggregateReview = {
+      schemaVersion: 1,
+      ok: true,
+      summary: {
+        totalFields: 2,
+        keep: 1,
+        rename: 1,
+        merge: 0,
+        derive: 0,
+        move: 0,
+        defer: 0,
+        remove: 0,
+        opaque: 0,
+      },
+      findings: [],
+      decisions: [
+        reviewWithoutFinalPath("recipe", "variant"),
+        {
+          ...reviewWithoutFinalPath("variant", "variant"),
+          decision: "keep",
+        },
+      ],
+    };
+
+    expect(() => applyAggregateToGraph(graph, aggregate)).toThrow("duplicate field path");
   });
 
   test("composes parent and child renames", () => {

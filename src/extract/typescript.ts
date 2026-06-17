@@ -105,9 +105,13 @@ function addPropertyField(
   const typeNode = member.type;
   const type = typeNode?.getText(sourceFile) ?? "unknown";
   const ref = referencedModel(type, modelNames);
-  const arrayElement = typeNode && ts.isArrayTypeNode(typeNode) ? typeNode.elementType : null;
-  const inlineObjectType = typeNode && ts.isTypeLiteralNode(typeNode) ? typeNode : null;
-  const inlineArrayObjectType = arrayElement && ts.isTypeLiteralNode(arrayElement) ? arrayElement : null;
+  const typeCandidates = typeNode ? nonNullableTypeNodes(typeNode) : [];
+  const inlineObjectType = typeCandidates.find((candidate) => ts.isTypeLiteralNode(candidate)) as
+    | ts.TypeLiteralNode
+    | undefined;
+  const inlineArrayObjectType = typeCandidates
+    .map((candidate) => ts.isArrayTypeNode(candidate) ? candidate.elementType : null)
+    .find((candidate): candidate is ts.TypeLiteralNode => Boolean(candidate && ts.isTypeLiteralNode(candidate)));
   const objectLike = Boolean(ref) || Boolean(inlineObjectType) || Boolean(inlineArrayObjectType);
   fields.push({
     path,
@@ -137,6 +141,31 @@ function propertyNameText(name: ts.PropertyName): string | null {
     return name.text;
   }
   return null;
+}
+
+function nonNullableTypeNodes(typeNode: ts.TypeNode): ts.TypeNode[] {
+  const unwrapped = unwrapParenthesizedType(typeNode);
+  if (!ts.isUnionTypeNode(unwrapped)) {
+    return [unwrapped];
+  }
+  return unwrapped.types
+    .map(unwrapParenthesizedType)
+    .filter((candidate) => !isNullishTypeNode(candidate));
+}
+
+function unwrapParenthesizedType(typeNode: ts.TypeNode): ts.TypeNode {
+  let current = typeNode;
+  while (ts.isParenthesizedTypeNode(current)) {
+    current = current.type;
+  }
+  return current;
+}
+
+function isNullishTypeNode(typeNode: ts.TypeNode): boolean {
+  return (
+    typeNode.kind === ts.SyntaxKind.UndefinedKeyword ||
+    (ts.isLiteralTypeNode(typeNode) && typeNode.literal.kind === ts.SyntaxKind.NullKeyword)
+  );
 }
 
 function referencedModel(typeText: string, modelNames: Set<string>): string | null {

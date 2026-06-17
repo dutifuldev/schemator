@@ -30,11 +30,13 @@ export function applyAggregateToGraph(graph: ModelGraph, aggregate: AggregateRev
           )
           .map((decision) => decision.fieldPath),
       );
+      const fields = model.fields
+        .filter((field) => !isRemoved(field.path, removed))
+        .map((field) => applyRenames(field, renameMap));
+      assertUniqueFieldPaths(model.id, fields);
       return {
         ...model,
-        fields: model.fields
-          .filter((field) => !isRemoved(field.path, removed))
-          .map((field) => applyRenames(field, renameMap)),
+        fields,
       };
     }),
   };
@@ -73,6 +75,16 @@ function applyRenames(field: FieldNode, renameMap: Map<string, string>): FieldNo
     path: nextPath,
     name: nextName,
   };
+}
+
+function assertUniqueFieldPaths(modelId: string, fields: FieldNode[]): void {
+  const seen = new Set<string>();
+  for (const field of fields) {
+    if (seen.has(field.path)) {
+      throw new Error(`simplification produced duplicate field path ${modelId}.${field.path}`);
+    }
+    seen.add(field.path);
+  }
 }
 
 function pathMatches(path: string, from: string): boolean {

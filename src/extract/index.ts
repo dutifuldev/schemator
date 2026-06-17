@@ -114,8 +114,7 @@ function isJsonSchema(value: unknown): value is Record<string, unknown> {
   return (
     typeof value["$schema"] === "string" ||
     typeof value["$id"] === "string" ||
-    isSchemaType(value["type"]) ||
-    Array.isArray(value["required"])
+    (isRecord(value["properties"]) && (isSchemaType(value["type"]) || Array.isArray(value["required"])))
   );
 }
 

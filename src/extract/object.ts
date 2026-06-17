@@ -44,7 +44,8 @@ function visitObject(
 ): void {
   for (const [name, child] of Object.entries(value)) {
     const path = parentPath ? `${parentPath}.${name}` : name;
-    const objectLike = isRecord(child);
+    const arrayItem = arrayObjectItem(child);
+    const objectLike = isRecord(child) || Boolean(arrayItem);
     fields.push({
       path,
       name,
@@ -55,7 +56,9 @@ function visitObject(
       objectLike,
       source,
     });
-    if (objectLike) {
+    if (arrayItem) {
+      visitObject(arrayItem, modelId, `${path}[]`, fields, source);
+    } else if (isRecord(child)) {
       visitObject(child, modelId, path, fields, source);
     }
   }
@@ -76,4 +79,12 @@ function valueType(value: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function arrayObjectItem(value: unknown): Record<string, unknown> | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const firstObject = value.find(isRecord);
+  return firstObject ?? null;
 }
