@@ -25,7 +25,10 @@ export function extractJsonSchemaModel(
 ): ModelNode {
   const fields: FieldNode[] = [];
   const rootSchema = asSchema(value);
-  const rootRequired = !(rootSchema && schemaAllowsNull(rootSchema));
+  const rootRefSchema = typeof rootSchema?.$ref === "string"
+    ? resolveRefSchema(value, rootSchema.$ref, new Set())
+    : null;
+  const rootRequired = !(rootSchema && schemaOrRefAllowsNull(rootSchema, rootRefSchema));
   visitSchemaObject(value, modelId, "", fields, source, value, new Set(), rootRequired);
   return {
     id: modelId,

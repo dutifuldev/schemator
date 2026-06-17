@@ -839,6 +839,33 @@ describe("schemator", () => {
     }
   });
 
+  test("propagates nullable root JSON Schema ref targets to required fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          $ref: "#/$defs/MaybePolicy",
+          $defs: {
+            MaybePolicy: {
+              type: ["object", "null"],
+              required: ["id"],
+              properties: {
+                id: { type: "string" },
+              },
+            },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([["id", false]]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts JSON Schema array item ref fields", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -2652,6 +2679,52 @@ describe("schemator", () => {
       "settings.variant",
       "entries",
       "entries[].variant",
+    ]);
+  });
+
+  test("preserves escaped field names when applying unrelated renames", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [
+            field("a~1b", "a.b", "number", false),
+            field("promptRecipe", "promptRecipe", "string", false),
+          ],
+        },
+      ],
+    };
+    const aggregate: AggregateReview = {
+      schemaVersion: 1,
+      ok: true,
+      summary: {
+        totalFields: 2,
+        keep: 1,
+        rename: 1,
+        merge: 0,
+        derive: 0,
+        move: 0,
+        defer: 0,
+        remove: 0,
+        opaque: 0,
+      },
+      findings: [],
+      decisions: [
+        {
+          ...reviewWithoutFinalPath("a~1b", "a.b"),
+          decision: "keep",
+        },
+        reviewWithoutFinalPath("promptRecipe", "systemPromptVariant"),
+      ],
+    };
+
+    expect(applyAggregateToGraph(graph, aggregate).models[0]?.fields.map((item) => [item.path, item.name])).toEqual([
+      ["a~1b", "a.b"],
+      ["systemPromptVariant", "systemPromptVariant"],
     ]);
   });
 

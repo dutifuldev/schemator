@@ -73,12 +73,11 @@ function parentPath(path: string): string {
 
 function applyRenames(field: FieldNode, renameMap: Map<string, string>): FieldNode {
   const nextPath = applyRenameMapToPath(field.path, renameMap);
-  const segments = nextPath.split(".");
-  const nextName = segments[segments.length - 1] ?? field.name;
+  const exactRename = renameMap.get(field.path);
   return {
     ...field,
     path: nextPath,
-    name: nextName,
+    name: exactRename ? lastPathSegment(exactRename) : field.name,
   };
 }
 
@@ -115,4 +114,8 @@ function replacePathPrefix(path: string, from: string, to: string): string {
     return `${to}${path.slice(from.length)}`;
   }
   return path;
+}
+
+function lastPathSegment(path: string): string {
+  return path.split(".").at(-1) ?? path;
 }
