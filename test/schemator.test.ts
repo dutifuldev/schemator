@@ -323,6 +323,40 @@ describe("schemator", () => {
     }
   });
 
+  test("propagates required JSON Schema array parents to item fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          properties: {
+            entries: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  value: { type: "string" },
+                },
+                required: ["value"],
+              },
+            },
+          },
+          required: ["entries"],
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
+        ["entries", true],
+        ["entries[].value", true],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("propagates optional JSON Schema parents to nested required fields", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -1793,6 +1827,34 @@ describe("schemator", () => {
         "settings",
         "settings.promptRecipe",
         "name",
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("extracts TypeScript inline intersection property fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type User = {",
+          "  config: {",
+          "    promptRecipe: string;",
+          "  } & {",
+          "    retries: number;",
+          "  };",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
+        ["config", true],
+        ["config.promptRecipe", true],
+        ["config.retries", true],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });

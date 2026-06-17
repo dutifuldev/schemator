@@ -171,10 +171,12 @@ function visitSchemaObject(
     const type = schemaType(childSchema ?? child);
     const fieldRequired = ancestorRequired && required.has(name);
     const fieldNullable = Boolean(childSchema && schemaOrRefAllowsNull(childSchema, refSchema));
-    const descendantRequired = Boolean(
-      fieldRequired && childSchema && schemaOrRefAlwaysObject(childSchema, refSchema, root, refStack),
-    );
     const itemSchema = childSchema ? itemObjectSchema(childSchema, root, refStack) : null;
+    const nestedSchema = itemSchema?.value ?? refSchema?.value ?? childSchema;
+    const nestedRefStack = itemSchema ? withRef(refStack, itemSchema.ref) : refSchema ? withRef(refStack, refSchema.ref) : refStack;
+    const descendantRequired = Boolean(
+      fieldRequired && childSchema && schemaAlwaysObject(nestedSchema, root, nestedRefStack),
+    );
     const objectLike = Boolean(childSchema && hasNestedSchema(childSchema, root, refStack));
     addField(fields, {
       path,
