@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { access, mkdir } from "node:fs/promises";
+import { access, mkdir, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Command } from "commander";
 import { aggregateReviews, readReviews } from "./aggregate.js";
@@ -133,7 +133,7 @@ program
   .requiredOption("--out <path>", "Markdown report output")
   .action(async (options: { run?: string; graph?: string; aggregate?: string; out: string }) => {
     await runCommand(async () => {
-      const paths = reportPaths(options);
+      const paths = await reportPaths(options);
       const graph = assertModelGraph(await readJson(paths.graph));
       const aggregate = assertAggregateReview(await readJson(paths.aggregate));
       const hasFinalGraph = paths.finalGraph ? await pathExists(paths.finalGraph) : false;
@@ -287,16 +287,17 @@ async function aggregateFromFiles(graphPath: string, reviewsDir: string): Promis
   return aggregate;
 }
 
-function reportPaths(options: { run?: string; graph?: string; aggregate?: string }): {
+async function reportPaths(options: { run?: string; graph?: string; aggregate?: string }): Promise<{
   graph: string;
   aggregate: string;
   finalGraph?: string;
-} {
+}> {
   if (options.run) {
     const runDir = resolvePath(options.run);
+    const iteration = await latestRunIteration(runDir);
     return {
-      graph: join(runDir, "graph.iteration-1.json"),
-      aggregate: join(runDir, "aggregate.iteration-1.json"),
+      graph: join(runDir, `graph.iteration-${iteration}.json`),
+      aggregate: join(runDir, `aggregate.iteration-${iteration}.json`),
       finalGraph: join(runDir, "graph.final.json"),
     };
   }
@@ -307,6 +308,21 @@ function reportPaths(options: { run?: string; graph?: string; aggregate?: string
     graph: resolvePath(options.graph),
     aggregate: resolvePath(options.aggregate),
   };
+}
+
+async function latestRunIteration(runDir: string): Promise<number> {
+  const entries = await readdir(runDir);
+  const iterations = entries
+    .map((entry) => /^aggregate\.iteration-(\d+)\.json$/.exec(entry)?.[1])
+    .filter((iteration): iteration is string => Boolean(iteration))
+    .map((iteration) => Number.parseInt(iteration, 10))
+    .filter(Number.isInteger)
+    .sort((left, right) => right - left);
+  const latest = iterations[0];
+  if (!latest) {
+    throw new Error(`run directory has no aggregate.iteration-*.json files: ${runDir}`);
+  }
+  return latest;
 }
 
 function assertModelGraph(value: unknown): ModelGraph {

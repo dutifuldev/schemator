@@ -66,7 +66,7 @@ function visitSchemaObject(
     return;
   }
   if (!isRecord(schema.properties)) {
-    if (schema && hasSchemaType(schema, "array")) {
+    if (schema && (hasSchemaType(schema, "array") || "items" in schema)) {
       const rootItemSchema = itemObjectSchema(schema, root, refStack);
       if (!rootItemSchema) {
         if (parentPath === "") {
@@ -141,9 +141,7 @@ function visitSchemaObject(
     const fieldRequired = ancestorRequired && required.has(name);
     const fieldNullable = Boolean(childSchema && hasSchemaType(childSchema, "null"));
     const descendantRequired = fieldRequired && !fieldNullable;
-    const itemSchema = childSchema && hasSchemaType(childSchema, "array")
-      ? itemObjectSchema(childSchema, root, refStack)
-      : null;
+    const itemSchema = childSchema ? itemObjectSchema(childSchema, root, refStack) : null;
     const objectLike = Boolean(childSchema && hasNestedSchema(childSchema, root, refStack));
     addField(fields, {
       path,
@@ -274,6 +272,9 @@ function schemaType(value: unknown): string {
   }
   if (isRecord(schema.properties)) {
     return "object";
+  }
+  if ("items" in schema) {
+    return "array";
   }
   return "unknown";
 }

@@ -447,6 +447,34 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts root JSON Schema arrays without metadata", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+            },
+            required: ["id"],
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.type, field.objectLike])).toEqual([
+        ["items", "array", true],
+        ["items[].id", "string", false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts primitive root JSON Schema array items", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -465,6 +493,39 @@ describe("schemator", () => {
 
       expect(graph.models[0]?.fields.map((field) => [field.path, field.type, field.objectLike])).toEqual([
         ["items", "string", false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("extracts JSON Schema array item fields when type is omitted", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          $schema: "https://json-schema.org/draft/2020-12/schema",
+          type: "object",
+          properties: {
+            rows: {
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                },
+                required: ["id"],
+              },
+            },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.type, field.objectLike])).toEqual([
+        ["rows", "array", true],
+        ["rows[].id", "string", false],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -1942,6 +2003,29 @@ describe("schemator", () => {
       await expect(readFile(join(runDir, "final-report.md"), "utf8")).resolves.toContain(
         "Schemator Data Model Review",
       );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("reports the converged iteration for run directories", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      const runDir = join(dir, "run");
+      const reportPath = join(runDir, "report.md");
+      await writeFile(source, "type T = { recipe: string };\n");
+
+      await execFileAsync(tsxBin(), ["src/cli.ts", "run", "--source", source, "--out", runDir], {
+        cwd: process.cwd(),
+      });
+      await execFileAsync(tsxBin(), ["src/cli.ts", "report", "--run", runDir, "--out", reportPath], {
+        cwd: process.cwd(),
+      });
+
+      const report = await readFile(reportPath, "utf8");
+      expect(report).toContain("| `T` | `variant` | keep | `variant` |");
+      expect(report).not.toContain("| `T` | `recipe` | rename | `variant` |");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

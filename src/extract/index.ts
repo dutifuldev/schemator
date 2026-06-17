@@ -121,7 +121,7 @@ function isJsonSchema(value: unknown): value is Record<string, unknown> {
     return false;
   }
   const hasSchemaMetadata = typeof value["$schema"] === "string" || typeof value["$id"] === "string";
-  const hasSchemaShape =
+  const hasRootSchemaKeyword =
     typeof value["$ref"] === "string" ||
     isSchemaType(value["type"]) ||
     isRecord(value["properties"]) ||
@@ -129,13 +129,51 @@ function isJsonSchema(value: unknown): value is Record<string, unknown> {
     isRecord(value["definitions"]) ||
     Array.isArray(value["allOf"]) ||
     Array.isArray(value["anyOf"]) ||
-    Array.isArray(value["oneOf"]) ||
+    Array.isArray(value["oneOf"]);
+  const hasSchemaShape =
+    hasRootSchemaKeyword ||
     "items" in value;
+  const hasOnlySchemaRootKeys = Object.keys(value).every(isSchemaRootKey);
   return (
     (hasSchemaMetadata && hasSchemaShape) ||
-    hasSchemaProperties(value["properties"])
+    (hasOnlySchemaRootKeys && (hasRootSchemaKeyword || hasSchemaProperties(value["properties"])))
   );
 }
+
+function isSchemaRootKey(key: string): boolean {
+  return schemaRootKeys.has(key);
+}
+
+const schemaRootKeys = new Set([
+  "$comment",
+  "$defs",
+  "$id",
+  "$ref",
+  "$schema",
+  "additionalProperties",
+  "allOf",
+  "anyOf",
+  "const",
+  "default",
+  "definitions",
+  "description",
+  "enum",
+  "examples",
+  "format",
+  "items",
+  "maxItems",
+  "maxLength",
+  "maximum",
+  "minItems",
+  "minLength",
+  "minimum",
+  "oneOf",
+  "pattern",
+  "properties",
+  "required",
+  "title",
+  "type",
+]);
 
 function hasSchemaProperties(value: unknown): boolean {
   return isRecord(value) && Object.values(value).some(isSchemaProperty);
