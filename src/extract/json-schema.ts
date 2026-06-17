@@ -15,7 +15,7 @@ export function extractJsonSchemaModel(
   source: SourceSpan,
 ): ModelNode {
   const fields: FieldNode[] = [];
-  visitSchemaObject(value, modelId, "", fields, source);
+  visitSchemaObject(value, modelId, "", fields, source, value);
   return {
     id: modelId,
     kind: "object",
@@ -30,6 +30,7 @@ function visitSchemaObject(
   parentPath: string,
   fields: FieldNode[],
   source: SourceSpan,
+  root: unknown,
 ): void {
   const schema = asSchema(value);
   if (!schema || !isRecord(schema.properties)) {
@@ -44,9 +45,11 @@ function visitSchemaObject(
 
   for (const [name, child] of Object.entries(schema.properties)) {
     const childSchema = asSchema(child);
+    const refSchema = typeof childSchema?.$ref === "string" ? resolveLocalRef(root, childSchema.$ref) : null;
     const path = parentPath ? `${parentPath}.${name}` : name;
     const type = schemaType(childSchema ?? child);
     const objectLike =
+      Boolean(refSchema && isRecord(asSchema(refSchema)?.properties)) ||
       Boolean(childSchema && hasSchemaType(childSchema, "object")) ||
       isRecord(childSchema?.properties) ||
       Boolean(childSchema && hasSchemaType(childSchema, "array") && itemObjectSchema(childSchema));
@@ -63,10 +66,12 @@ function visitSchemaObject(
     });
     if (objectLike) {
       const itemSchema = childSchema && hasSchemaType(childSchema, "array") ? itemObjectSchema(childSchema) : null;
-      if (itemSchema) {
-        visitSchemaObject(itemSchema, modelId, `${path}[]`, fields, source);
+      if (refSchema) {
+        visitSchemaObject(refSchema, modelId, path, fields, source, root);
+      } else if (itemSchema) {
+        visitSchemaObject(itemSchema, modelId, `${path}[]`, fields, source, root);
       } else {
-        visitSchemaObject(child, modelId, path, fields, source);
+        visitSchemaObject(child, modelId, path, fields, source, root);
       }
     }
   }
@@ -113,6 +118,21 @@ function hasSchemaType(schema: JsonSchemaLike, type: string): boolean {
     return true;
   }
   return Array.isArray(schema.type) && schema.type.includes(type);
+}
+
+function resolveLocalRef(root: unknown, ref: string): unknown | null {
+  if (!ref.startsWith("#/")) {
+    return null;
+  }
+  let current: unknown = root;
+  for (const rawSegment of ref.slice(2).split("/")) {
+    const segment = rawSegment.replace(/~1/g, "/").replace(/~0/g, "~");
+    if (!isRecord(current) || !(segment in current)) {
+      return null;
+    }
+    current = current[segment];
+  }
+  return current;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -110,7 +110,7 @@ function addPropertyField(
     | ts.TypeLiteralNode
     | undefined;
   const inlineArrayObjectType = typeCandidates
-    .map((candidate) => ts.isArrayTypeNode(candidate) ? candidate.elementType : null)
+    .map(arrayElementTypeNode)
     .find((candidate): candidate is ts.TypeLiteralNode => Boolean(candidate && ts.isTypeLiteralNode(candidate)));
   const objectLike = Boolean(ref) || Boolean(inlineObjectType) || Boolean(inlineArrayObjectType);
   fields.push({
@@ -166,6 +166,20 @@ function isNullishTypeNode(typeNode: ts.TypeNode): boolean {
     typeNode.kind === ts.SyntaxKind.UndefinedKeyword ||
     (ts.isLiteralTypeNode(typeNode) && typeNode.literal.kind === ts.SyntaxKind.NullKeyword)
   );
+}
+
+function arrayElementTypeNode(typeNode: ts.TypeNode): ts.TypeNode | null {
+  if (ts.isArrayTypeNode(typeNode)) {
+    return unwrapParenthesizedType(typeNode.elementType);
+  }
+  if (!ts.isTypeReferenceNode(typeNode) || !typeNode.typeArguments || typeNode.typeArguments.length !== 1) {
+    return null;
+  }
+  const typeName = typeNode.typeName.getText();
+  if (typeName !== "Array" && typeName !== "ReadonlyArray") {
+    return null;
+  }
+  return unwrapParenthesizedType(typeNode.typeArguments[0] as ts.TypeNode);
 }
 
 function referencedModel(typeText: string, modelNames: Set<string>): string | null {

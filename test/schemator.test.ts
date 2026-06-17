@@ -175,6 +175,38 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts JSON Schema local ref object fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          properties: {
+            policy: {
+              $ref: "#/$defs/Policy",
+            },
+          },
+          $defs: {
+            Policy: {
+              type: "object",
+              properties: {
+                promptRecipe: { type: "string" },
+              },
+            },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["policy", "policy.promptRecipe"]);
+      expect(graph.models[0]?.fields[0]?.objectLike).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts Markdown JSONC fences", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -586,6 +618,38 @@ describe("schemator", () => {
         "items",
         "items[].id",
         "items[].recipe",
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("extracts TypeScript generic inline object arrays", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Cart = {",
+          "  items?: Array<{",
+          "    id: string;",
+          "    recipe?: string;",
+          "  }>;",
+          "  readonlyItems?: ReadonlyArray<{",
+          "    sku: string;",
+          "  }>;",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((item) => item.path)).toEqual([
+        "items",
+        "items[].id",
+        "items[].recipe",
+        "readonlyItems",
+        "readonlyItems[].sku",
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
