@@ -193,6 +193,10 @@ function referencedModel(typeText: string, modelNames: Set<string>): string | nu
     if (arrayMatch?.[1] && modelNames.has(arrayMatch[1])) {
       return arrayMatch[1];
     }
+    const genericArrayMatch = /^(?:Array|ReadonlyArray)<([A-Z][A-Za-z0-9_]*)>$/.exec(candidate);
+    if (genericArrayMatch?.[1] && modelNames.has(genericArrayMatch[1])) {
+      return genericArrayMatch[1];
+    }
     if (modelNames.has(candidate)) {
       return candidate;
     }

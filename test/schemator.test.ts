@@ -207,6 +207,71 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts JSON Schema array item ref fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          properties: {
+            items: {
+              type: "array",
+              items: {
+                $ref: "#/$defs/Item",
+              },
+            },
+          },
+          $defs: {
+            Item: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+              },
+            },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["items", "items[].id"]);
+      expect(graph.models[0]?.fields[0]?.objectLike).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("bounds recursive JSON Schema local refs", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          properties: {
+            child: { $ref: "#/$defs/Node" },
+          },
+          $defs: {
+            Node: {
+              type: "object",
+              properties: {
+                child: { $ref: "#/$defs/Node" },
+              },
+            },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["child", "child.child"]);
+      expect(graph.models[0]?.fields.map((field) => field.objectLike)).toEqual([true, false]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts Markdown JSONC fences", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -650,6 +715,32 @@ describe("schemator", () => {
         "items[].recipe",
         "readonlyItems",
         "readonlyItems[].sku",
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("recognizes TypeScript generic array model references", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Child = { id: string };",
+          "type Parent = {",
+          "  children: Array<Child>;",
+          "  readonlyChildren: ReadonlyArray<Child>;",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+      const parent = graph.models.find((model) => model.id === "Parent");
+
+      expect(parent?.fields.map((field) => [field.path, field.objectLike, field.ref])).toEqual([
+        ["children", true, "Child"],
+        ["readonlyChildren", true, "Child"],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });

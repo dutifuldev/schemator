@@ -9,13 +9,18 @@ type JsonSchemaLike = {
   $ref?: unknown;
 };
 
+type ResolvedSchema = {
+  value: unknown;
+  ref?: string;
+};
+
 export function extractJsonSchemaModel(
   value: unknown,
   modelId: string,
   source: SourceSpan,
 ): ModelNode {
   const fields: FieldNode[] = [];
-  visitSchemaObject(value, modelId, "", fields, source, value);
+  visitSchemaObject(value, modelId, "", fields, source, value, new Set());
   return {
     id: modelId,
     kind: "object",
@@ -31,6 +36,7 @@ function visitSchemaObject(
   fields: FieldNode[],
   source: SourceSpan,
   root: unknown,
+  refStack: Set<string>,
 ): void {
   const schema = asSchema(value);
   if (!schema || !isRecord(schema.properties)) {
@@ -45,14 +51,19 @@ function visitSchemaObject(
 
   for (const [name, child] of Object.entries(schema.properties)) {
     const childSchema = asSchema(child);
-    const refSchema = typeof childSchema?.$ref === "string" ? resolveLocalRef(root, childSchema.$ref) : null;
+    const refSchema = typeof childSchema?.$ref === "string"
+      ? resolveRefSchema(root, childSchema.$ref, refStack)
+      : null;
     const path = parentPath ? `${parentPath}.${name}` : name;
     const type = schemaType(childSchema ?? child);
+    const itemSchema = childSchema && hasSchemaType(childSchema, "array")
+      ? itemObjectSchema(childSchema, root, refStack)
+      : null;
     const objectLike =
-      Boolean(refSchema && isRecord(asSchema(refSchema)?.properties)) ||
+      Boolean(refSchema) ||
       Boolean(childSchema && hasSchemaType(childSchema, "object")) ||
       isRecord(childSchema?.properties) ||
-      Boolean(childSchema && hasSchemaType(childSchema, "array") && itemObjectSchema(childSchema));
+      Boolean(itemSchema);
     fields.push({
       path,
       name,
@@ -65,26 +76,28 @@ function visitSchemaObject(
       ...(typeof childSchema?.$ref === "string" ? { ref: childSchema.$ref } : {}),
     });
     if (objectLike) {
-      const itemSchema = childSchema && hasSchemaType(childSchema, "array") ? itemObjectSchema(childSchema) : null;
       if (refSchema) {
-        visitSchemaObject(refSchema, modelId, path, fields, source, root);
+        visitSchemaObject(refSchema.value, modelId, path, fields, source, root, withRef(refStack, refSchema.ref));
       } else if (itemSchema) {
-        visitSchemaObject(itemSchema, modelId, `${path}[]`, fields, source, root);
+        visitSchemaObject(itemSchema.value, modelId, `${path}[]`, fields, source, root, withRef(refStack, itemSchema.ref));
       } else {
-        visitSchemaObject(child, modelId, path, fields, source, root);
+        visitSchemaObject(child, modelId, path, fields, source, root, refStack);
       }
     }
   }
 }
 
-function itemObjectSchema(schema: JsonSchemaLike): unknown | null {
+function itemObjectSchema(schema: JsonSchemaLike, root: unknown, refStack: Set<string>): ResolvedSchema | null {
   const items = schema.items;
   const itemSchema = asSchema(items);
   if (!itemSchema) {
     return null;
   }
+  if (typeof itemSchema.$ref === "string") {
+    return resolveRefSchema(root, itemSchema.$ref, refStack);
+  }
   if (hasSchemaType(itemSchema, "object") || isRecord(itemSchema.properties)) {
-    return items;
+    return { value: items };
   }
   return null;
 }
@@ -120,6 +133,18 @@ function hasSchemaType(schema: JsonSchemaLike, type: string): boolean {
   return Array.isArray(schema.type) && schema.type.includes(type);
 }
 
+function resolveRefSchema(root: unknown, ref: string, refStack: Set<string>): ResolvedSchema | null {
+  if (refStack.has(ref)) {
+    return null;
+  }
+  const value = resolveLocalRef(root, ref);
+  const schema = asSchema(value);
+  if (!schema || !isRecord(schema.properties)) {
+    return null;
+  }
+  return { value, ref };
+}
+
 function resolveLocalRef(root: unknown, ref: string): unknown | null {
   if (!ref.startsWith("#/")) {
     return null;
@@ -133,6 +158,15 @@ function resolveLocalRef(root: unknown, ref: string): unknown | null {
     current = current[segment];
   }
   return current;
+}
+
+function withRef(refStack: Set<string>, ref: string | undefined): Set<string> {
+  if (!ref) {
+    return refStack;
+  }
+  const next = new Set(refStack);
+  next.add(ref);
+  return next;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
