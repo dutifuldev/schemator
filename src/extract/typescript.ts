@@ -205,14 +205,14 @@ function modelKind(declaration: Declaration, objectDeclarations: Map<string, Dec
   if (memberGroupsForDeclaration(declaration, objectDeclarations, new Set([declaration.name.text])).length > 0) {
     return "object";
   }
-  if (ts.isUnionTypeNode(declaration.type)) {
-    return "enum";
-  }
   if (ts.isArrayTypeNode(declaration.type)) {
     return "array";
   }
   if (arrayElementTypeNode(declaration.type)) {
     return "array";
+  }
+  if (ts.isUnionTypeNode(declaration.type)) {
+    return "enum";
   }
   return "scalar";
 }
@@ -611,6 +611,15 @@ function isNullishTypeNode(typeNode: ts.TypeNode): boolean {
 
 function arrayElementTypeNode(typeNode: ts.TypeNode): ts.TypeNode | null {
   const unwrapped = unwrapParenthesizedType(typeNode);
+  if (ts.isUnionTypeNode(unwrapped)) {
+    for (const candidate of nonNullableTypeNodes(unwrapped)) {
+      const element = arrayElementTypeNode(candidate);
+      if (element) {
+        return element;
+      }
+    }
+    return null;
+  }
   if (ts.isTypeOperatorNode(unwrapped) && unwrapped.operator === ts.SyntaxKind.ReadonlyKeyword) {
     return arrayElementTypeNode(unwrapped.type);
   }

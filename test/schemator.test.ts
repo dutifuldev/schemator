@@ -1431,6 +1431,31 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts nullable top-level TypeScript array aliases", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Child = {",
+          "  id: string;",
+          "};",
+          "type Children = Child[] | null;",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+      const children = graph.models.find((model) => model.id === "Children");
+
+      expect(children?.kind).toBe("array");
+      expect(children?.fields.map((field) => [field.path, field.nullable, field.objectLike, field.ref])).toEqual([
+        ["items", true, true, "Child"],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("recognizes TypeScript array aliases as model references", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -1944,6 +1969,53 @@ describe("schemator", () => {
 
     expect(plan).toContain("- Final path: settings.variant");
     expect(plan).not.toContain("- Final path: config.variant");
+  });
+
+  test("composes parent renames for non-rename patch-plan rows", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [
+            field("config", "config", "object", true),
+            field("config.token", "token", "string", false),
+          ],
+        },
+      ],
+    };
+    const aggregate: AggregateReview = {
+      schemaVersion: 1,
+      ok: true,
+      summary: {
+        totalFields: 2,
+        keep: 0,
+        rename: 1,
+        merge: 0,
+        derive: 0,
+        move: 0,
+        defer: 0,
+        remove: 1,
+        opaque: 0,
+      },
+      findings: [],
+      decisions: [
+        reviewWithoutFinalPath("config", "settings"),
+        {
+          ...reviewWithoutFinalPath("config.token", "token"),
+          decision: "remove",
+        },
+      ],
+    };
+
+    const plan = renderPatchPlan(graph, aggregate);
+
+    expect(plan).toContain("## JsonSchema.config.token");
+    expect(plan).toContain("- Final path: settings.token");
+    expect(plan).not.toContain("- Final path: token");
   });
 
   test("uses source-neutral rename text in patch plans", () => {

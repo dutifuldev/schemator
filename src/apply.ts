@@ -56,10 +56,13 @@ function finalPathForDecision(
   renameMaps: Map<string, Map<string, string>>,
 ): string {
   const renameMap = renameMaps.get(decision.model);
-  if (decision.decision === "rename" && renameMap) {
+  if (renameMap) {
     return applyRenameMapToPath(decision.fieldPath, renameMap);
   }
-  return decision.finalPath ?? decision.finalName;
+  if (decision.decision === "rename") {
+    return decision.finalPath ?? rawFinalPathForRename(decision);
+  }
+  return decision.finalPath ?? decision.fieldPath;
 }
 
 function rawFinalPathForRename(decision: AggregateReview["decisions"][number]): string {
