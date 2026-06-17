@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, test } from "vitest";
 import { aggregateReviews } from "../src/aggregate.js";
+import { renderPatchPlan } from "../src/apply.js";
 import { extractGraph } from "../src/extract/index.js";
 import { pathToFileNamePart } from "../src/files.js";
 import { applyAggregateToGraph, hasSimplification } from "../src/graph.js";
@@ -116,6 +117,27 @@ describe("schemator", () => {
     }
   });
 
+  test("keeps generated reviews valid for empty object leaves", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "document.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          settings: {},
+        }),
+      );
+      const graph = await extractGraph(source);
+      const reviews = await writeDeterministicReviews(graph, join(dir, "reviews"));
+      const aggregate = aggregateReviews(graph, reviews);
+
+      expect(aggregate.ok).toBe(true);
+      expect(aggregate.decisions.find((review) => review.fieldPath === "settings")?.decision).toBe("opaque");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts JSON Schema array item fields", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -140,6 +162,33 @@ describe("schemator", () => {
       const graph = await extractGraph(source);
 
       expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["items", "items[].id"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("extracts root JSON Schema array item fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          $schema: "https://json-schema.org/draft/2020-12/schema",
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+            },
+            required: ["id"],
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["items", "items[].id"]);
+      expect(graph.models[0]?.fields[0]?.objectLike).toBe(true);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -655,6 +704,46 @@ describe("schemator", () => {
       "entries",
       "entries[].variant",
     ]);
+  });
+
+  test("composes nested rename paths in patch plans", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [
+            field("config", "config", "object", true),
+            field("config.recipe", "recipe", "string", false),
+          ],
+        },
+      ],
+    };
+    const aggregate: AggregateReview = {
+      schemaVersion: 1,
+      ok: true,
+      summary: {
+        totalFields: 2,
+        keep: 0,
+        rename: 2,
+        merge: 0,
+        derive: 0,
+        move: 0,
+        defer: 0,
+        remove: 0,
+        opaque: 0,
+      },
+      findings: [],
+      decisions: [reviewWithoutFinalPath("config", "settings"), reviewWithoutFinalPath("config.recipe", "variant")],
+    };
+
+    const plan = renderPatchPlan(graph, aggregate);
+
+    expect(plan).toContain("- Final path: settings.variant");
+    expect(plan).not.toContain("- Final path: config.variant");
   });
 
   test("uses finalName when rename review omits finalPath", () => {

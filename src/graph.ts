@@ -61,13 +61,7 @@ function finalPathForRename(decision: FieldReview): string {
 }
 
 function applyRenames(field: FieldNode, renameMap: Map<string, string>): FieldNode {
-  let nextPath = field.path;
-  const mappings = [...renameMap.entries()]
-    .filter(([from]) => pathMatches(field.path, from))
-    .sort((left, right) => right[0].length - left[0].length);
-  for (const [from, to] of mappings) {
-    nextPath = replacePathPrefix(nextPath, from, to);
-  }
+  const nextPath = applyRenameMapToPath(field.path, renameMap);
   const segments = nextPath.split(".");
   const nextName = segments[segments.length - 1] ?? field.name;
   return {
@@ -75,6 +69,17 @@ function applyRenames(field: FieldNode, renameMap: Map<string, string>): FieldNo
     path: nextPath,
     name: nextName,
   };
+}
+
+export function applyRenameMapToPath(path: string, renameMap: Map<string, string>): string {
+  let nextPath = path;
+  const mappings = [...renameMap.entries()]
+    .filter(([from]) => pathMatches(path, from))
+    .sort((left, right) => right[0].length - left[0].length);
+  for (const [from, to] of mappings) {
+    nextPath = replacePathPrefix(nextPath, from, to);
+  }
+  return nextPath;
 }
 
 function assertUniqueFieldPaths(modelId: string, fields: FieldNode[]): void {

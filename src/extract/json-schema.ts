@@ -40,6 +40,31 @@ function visitSchemaObject(
 ): void {
   const schema = asSchema(value);
   if (!schema || !isRecord(schema.properties)) {
+    if (schema && parentPath === "" && hasSchemaType(schema, "array")) {
+      const rootItemSchema = itemObjectSchema(schema, root, refStack);
+      if (!rootItemSchema) {
+        return;
+      }
+      fields.push({
+        path: "items",
+        name: "items",
+        type: schemaType(schema),
+        required: true,
+        nullable: hasSchemaType(schema, "null"),
+        parent: modelId,
+        objectLike: true,
+        source,
+      });
+      visitSchemaObject(
+        rootItemSchema.value,
+        modelId,
+        "items[]",
+        fields,
+        source,
+        root,
+        withRef(refStack, rootItemSchema.ref),
+      );
+    }
     return;
   }
 

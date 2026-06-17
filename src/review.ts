@@ -11,7 +11,7 @@ export async function writeDeterministicReviews(
   const reviews: FieldReview[] = [];
   for (const model of graph.models) {
     for (const field of model.fields) {
-      const review = reviewField(model.id, field, options);
+      const review = reviewField(model.id, field, options, hasNestedReviewContext(graph, model.id, field));
       reviews.push(review);
       const fileName = `${pathToFileNamePart(model.id)}.${pathToFileNamePart(field.path)}.review.json`;
       await writeJson(join(outputDir, fileName), review);
@@ -20,8 +20,13 @@ export async function writeDeterministicReviews(
   return reviews;
 }
 
-export function reviewField(modelId: string, field: FieldNode, options: ReviewOptions): FieldReview {
-  const rule = decisionRule(field);
+export function reviewField(
+  modelId: string,
+  field: FieldNode,
+  options: ReviewOptions,
+  hasNestedContext = false,
+): FieldReview {
+  const rule = decisionRule(field, hasNestedContext);
   const finalPath = rule.finalName === field.name
     ? field.path
     : replaceLastPathSegment(field.path, rule.finalName);
@@ -57,7 +62,21 @@ type Rule = Pick<
   finalType?: string;
 };
 
-function decisionRule(field: FieldNode): Rule {
+function decisionRule(field: FieldNode, hasNestedContext: boolean): Rule {
+  if (field.objectLike && !hasNestedContext) {
+    return {
+      decision: "opaque",
+      finalName: field.name,
+      rationale:
+        `\`${field.name}\` is object-like but has no extracted child fields, so the reviewer cannot safely simplify inside it.`,
+      alternatives: [field.name, "closedFields", "remove"],
+      simplestChoice: field.name,
+      confidence: "medium",
+      questions: [`Can ${field.path} be expanded into closed, named fields?`],
+      ownerBoundary: "Unexpanded object boundary.",
+    };
+  }
+
   if (field.name === "promptRecipe") {
     return {
       decision: "rename",
@@ -162,4 +181,19 @@ function replaceLastPathSegment(path: string, finalName: string): string {
   const segments = path.split(".");
   segments[segments.length - 1] = finalName;
   return segments.join(".");
+}
+
+function hasNestedReviewContext(graph: ModelGraph, modelId: string, field: FieldNode): boolean {
+  const model = graph.models.find((candidate) => candidate.id === modelId);
+  if (model?.fields.some((candidate) => candidate.path.startsWith(`${field.path}.`))) {
+    return true;
+  }
+  if (model?.fields.some((candidate) => candidate.path.startsWith(`${field.path}[].`))) {
+    return true;
+  }
+  if (field.ref) {
+    const referenced = graph.models.find((candidate) => candidate.id === field.ref);
+    return Boolean(referenced && referenced.fields.length > 0);
+  }
+  return false;
 }

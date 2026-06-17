@@ -152,6 +152,7 @@ program
       let graph: ModelGraph = initialGraph;
       let lastAggregate: AggregateReview | null = null;
       let firstAggregate: AggregateReview | null = null;
+      let invalidAggregate: AggregateReview | null = null;
       let stableIteration = 0;
 
       for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
@@ -171,7 +172,11 @@ program
         lastAggregate = aggregate;
         stableIteration = iteration;
 
-        if (!aggregate.ok || !hasSimplification(aggregate)) {
+        if (!aggregate.ok) {
+          invalidAggregate = aggregate;
+          break;
+        }
+        if (!hasSimplification(aggregate)) {
           break;
         }
         graph = applyAggregateToGraph(graph, aggregate);
@@ -196,6 +201,11 @@ program
           2,
         )}\n`,
       );
+      if (invalidAggregate) {
+        throw new Error(
+          `aggregate validation failed at iteration ${stableIteration}: ${invalidAggregate.findings.map((finding) => finding.message).join("; ")}`,
+        );
+      }
     });
   });
 
