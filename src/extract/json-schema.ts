@@ -569,6 +569,9 @@ function schemaAllowsNull(schema: JsonSchemaLike): boolean {
   if (hasSchemaType(schema, "null")) {
     return true;
   }
+  if (schemaTypes(schema.type).length > 0) {
+    return false;
+  }
   const nullableAlternatives = [...schemaArray(schema.anyOf), ...schemaArray(schema.oneOf)];
   if (nullableAlternatives.some((candidate) => {
     const candidateSchema = asSchema(candidate);

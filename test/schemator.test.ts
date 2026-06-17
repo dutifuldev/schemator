@@ -833,6 +833,38 @@ describe("schemator", () => {
     }
   });
 
+  test("keeps typed JSON Schema combinators non-nullable", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          required: ["config"],
+          properties: {
+            config: {
+              type: "object",
+              allOf: [{}],
+              properties: {
+                id: { type: "string" },
+              },
+              required: ["id"],
+            },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required, field.nullable])).toEqual([
+        ["config", true, false],
+        ["config.id", true, false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts JSON Schema child combinator object fields", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
