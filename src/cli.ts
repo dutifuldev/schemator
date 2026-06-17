@@ -135,14 +135,13 @@ program
     await runCommand(async () => {
       const paths = await reportPaths(options);
       const graph = assertModelGraph(await readJson(paths.graph));
-      const aggregate = paths.aggregatePaths
-        ? combineAggregates(await Promise.all(paths.aggregatePaths.map(readAggregate)))
-        : await readAggregate(paths.aggregate);
+      const aggregates = paths.aggregatePaths ? await Promise.all(paths.aggregatePaths.map(readAggregate)) : null;
+      const aggregate = aggregates ? combineAggregates(aggregates) : await readAggregate(paths.aggregate);
       const hasFinalGraph = paths.finalGraph ? await pathExists(paths.finalGraph) : false;
       const finalGraph = paths.finalGraph && hasFinalGraph
         ? assertModelGraph(await readJson(paths.finalGraph))
         : aggregate.ok
-          ? applyAggregateToGraph(graph, aggregate)
+          ? deriveFinalGraph(graph, aggregates ?? [aggregate])
           : undefined;
       await writeText(resolvePath(options.out), renderReport(graph, aggregate, finalGraph));
     });
@@ -340,6 +339,14 @@ function combineAggregates(aggregates: AggregateReview[]): AggregateReview {
     decisions: aggregates.flatMap((aggregate) => aggregate.decisions),
     findings: aggregates.flatMap((aggregate) => aggregate.findings),
   };
+}
+
+function deriveFinalGraph(graph: ModelGraph, aggregates: AggregateReview[]): ModelGraph {
+  let next = graph;
+  for (const aggregate of aggregates) {
+    next = applyAggregateToGraph(next, aggregate);
+  }
+  return next;
 }
 
 function emptySummary(): AggregateReview["summary"] {

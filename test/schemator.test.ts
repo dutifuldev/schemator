@@ -2304,6 +2304,95 @@ describe("schemator", () => {
     }
   });
 
+  test("replays manual run aggregate history when final graph is missing", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const runDir = join(dir, "run");
+      await mkdir(runDir);
+      const graph: ModelGraph = {
+        schemaVersion: 1,
+        source: { path: "schema.json", revision: null },
+        models: [
+          {
+            id: "JsonSchema",
+            kind: "object",
+            source: sourceSpan(),
+            fields: [
+              field("config", "config", "object", true),
+              field("config.token", "token", "string", false),
+            ],
+          },
+        ],
+      };
+      const firstAggregate: AggregateReview = {
+        schemaVersion: 1,
+        ok: true,
+        summary: {
+          totalFields: 2,
+          keep: 1,
+          rename: 1,
+          merge: 0,
+          derive: 0,
+          move: 0,
+          defer: 0,
+          remove: 0,
+          opaque: 0,
+        },
+        findings: [],
+        decisions: [
+          review("config", "settings"),
+          {
+            ...review("config.token", "config.token"),
+            decision: "keep",
+            finalName: "token",
+          },
+        ],
+      };
+      const secondAggregate: AggregateReview = {
+        schemaVersion: 1,
+        ok: true,
+        summary: {
+          totalFields: 2,
+          keep: 1,
+          rename: 0,
+          merge: 0,
+          derive: 0,
+          move: 0,
+          defer: 0,
+          remove: 1,
+          opaque: 0,
+        },
+        findings: [],
+        decisions: [
+          {
+            ...review("settings", "settings"),
+            decision: "keep",
+            finalName: "settings",
+          },
+          {
+            ...review("settings.token", "settings.token"),
+            decision: "remove",
+            finalName: "token",
+          },
+        ],
+      };
+      await writeFile(join(runDir, "graph.iteration-1.json"), JSON.stringify(graph, null, 2));
+      await writeFile(join(runDir, "aggregate.iteration-1.json"), JSON.stringify(firstAggregate, null, 2));
+      await writeFile(join(runDir, "aggregate.iteration-2.json"), JSON.stringify(secondAggregate, null, 2));
+      await writeFile(join(runDir, "run-summary.json"), JSON.stringify({ schemaVersion: 1, stableIteration: 2 }, null, 2));
+
+      await execFileAsync(tsxBin(), ["src/cli.ts", "report", "--run", runDir, "--out", join(runDir, "final-report.md")], {
+        cwd: process.cwd(),
+      });
+      const report = await readFile(join(runDir, "final-report.md"), "utf8");
+
+      expect(report).toContain("| `settings` | `object` | yes | yes |");
+      expect(report).not.toContain("| `settings.token` | `string` | yes | no |");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("reports the converged iteration for run directories", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
