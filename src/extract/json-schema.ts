@@ -5,6 +5,7 @@ type JsonSchemaLike = {
   title?: unknown;
   type?: unknown;
   properties?: unknown;
+  patternProperties?: unknown;
   additionalProperties?: unknown;
   required?: unknown;
   items?: unknown;
@@ -73,6 +74,16 @@ function visitSchemaObject(
     return;
   }
   if (!isRecord(schema.properties)) {
+    addPatternPropertiesFields(
+      schema,
+      modelId,
+      parentPath,
+      fields,
+      source,
+      root,
+      refStack,
+      ancestorRequired,
+    );
     addAdditionalPropertiesFields(
       schema,
       modelId,
@@ -227,6 +238,16 @@ function visitSchemaObject(
       }
     }
   }
+  addPatternPropertiesFields(
+    schema,
+    modelId,
+    parentPath,
+    fields,
+    source,
+    root,
+    refStack,
+    ancestorRequired,
+  );
   addAdditionalPropertiesFields(
     schema,
     modelId,
@@ -248,6 +269,76 @@ function visitSchemaObject(
     ancestorRequired,
     inheritedRequired,
   );
+}
+
+function addPatternPropertiesFields(
+  schema: JsonSchemaLike,
+  modelId: string,
+  parentPath: string,
+  fields: FieldNode[],
+  source: SourceSpan,
+  root: unknown,
+  refStack: Set<string>,
+  ancestorRequired: boolean,
+): void {
+  if (!isRecord(schema.patternProperties)) {
+    return;
+  }
+  const patternParentPath = joinFieldPath(parentPath, "patternProperties");
+  for (const [pattern, child] of Object.entries(schema.patternProperties)) {
+    const childSchema = asSchema(child);
+    if (!childSchema) {
+      continue;
+    }
+    const refSchema = typeof childSchema.$ref === "string"
+      ? resolveRefSchema(root, childSchema.$ref, refStack)
+      : null;
+    const path = joinFieldPath(patternParentPath, pattern);
+    const itemSchema = itemObjectSchema(childSchema, root, refStack);
+    const descendantRequired = Boolean(
+      ancestorRequired && schemaAlwaysRequiredNestedContainer(childSchema, refSchema, itemSchema, root, refStack),
+    );
+    const objectLike = hasNestedSchema(childSchema, root, refStack);
+    addField(fields, {
+      path,
+      name: pattern,
+      type: schemaType(childSchema),
+      required: ancestorRequired,
+      nullable: schemaOrRefAllowsNull(childSchema, refSchema),
+      parent: modelId,
+      objectLike,
+      source,
+      ...(typeof childSchema.$ref === "string" ? { ref: childSchema.$ref } : {}),
+    });
+    if (!objectLike) {
+      continue;
+    }
+    if (refSchema) {
+      visitSchemaObject(
+        refSchema.value,
+        modelId,
+        path,
+        fields,
+        source,
+        root,
+        withRef(refStack, refSchema.ref),
+        descendantRequired,
+      );
+    } else if (itemSchema) {
+      visitSchemaObject(
+        itemSchema.value,
+        modelId,
+        `${path}[]`,
+        fields,
+        source,
+        root,
+        withRef(refStack, itemSchema.ref),
+        descendantRequired,
+      );
+    } else {
+      visitSchemaObject(childSchema, modelId, path, fields, source, root, refStack, descendantRequired);
+    }
+  }
 }
 
 function addAdditionalPropertiesFields(
@@ -398,6 +489,7 @@ function hasObjectSchemaShape(value: unknown, root: unknown, refStack: Set<strin
   return (
     hasSchemaType(schema, "object") ||
     isRecord(schema.properties) ||
+    isRecord(schema.patternProperties) ||
     schemaArray(schema.allOf).some((item) => hasObjectSchemaShape(item, root, refStack)) ||
     [...schemaArray(schema.anyOf), ...schemaArray(schema.oneOf)].some((item) =>
       hasObjectSchemaShape(item, root, refStack)
@@ -419,6 +511,7 @@ function hasNestedSchema(value: unknown, root: unknown, refStack: Set<string>): 
   }
   return (
     isRecord(schema.properties) ||
+    isRecord(schema.patternProperties) ||
     hasSchemaType(schema, "object") ||
     Boolean(itemObjectSchema(schema, root, refStack)) ||
     schemaArray(schema.allOf).some((item) => hasNestedSchema(item, root, refStack)) ||
@@ -443,6 +536,9 @@ function schemaType(value: unknown): string {
     return schema.type;
   }
   if (isRecord(schema.properties)) {
+    return "object";
+  }
+  if (isRecord(schema.patternProperties)) {
     return "object";
   }
   if ("items" in schema) {
@@ -513,6 +609,9 @@ function schemaAlwaysObject(value: unknown, root: unknown, refStack: Set<string>
     return types.length === 1 && types[0] === "object";
   }
   if (isRecord(schema.properties)) {
+    return true;
+  }
+  if (isRecord(schema.patternProperties)) {
     return true;
   }
   const allOf = schemaArray(schema.allOf);

@@ -372,6 +372,60 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts JSON Schema pattern property scalar values", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          patternProperties: {
+            "^S_": { type: "string" },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.name, field.type, field.objectLike])).toEqual([
+        ["patternProperties.^S_", "^S_", "string", false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("extracts JSON Schema pattern property object fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          $schema: "https://json-schema.org/draft/2020-12/schema",
+          type: "object",
+          patternProperties: {
+            "^profile\\.": {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+              },
+              required: ["id"],
+            },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required, field.objectLike])).toEqual([
+        ["patternProperties.^profile\\~1", true, true],
+        ["patternProperties.^profile\\~1.id", true, false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("uses fallback model id for empty JSON Schema titles", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {

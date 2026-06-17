@@ -185,17 +185,20 @@ function isJsonSchema(value: unknown): value is Record<string, unknown> {
     isSchemaType(value["type"]) ||
     isRecord(value["$defs"]) ||
     isRecord(value["definitions"]) ||
+    isRecord(value["patternProperties"]) ||
     Array.isArray(value["allOf"]) ||
     Array.isArray(value["anyOf"]) ||
     Array.isArray(value["oneOf"]);
   const hasSchemaShape =
     hasRootSchemaKeyword ||
     isRecord(value["properties"]) ||
+    isRecord(value["patternProperties"]) ||
     "items" in value;
   const hasOnlySchemaRootKeys = Object.keys(value).every(isSchemaRootKey);
   return (
     (hasSchemaMetadata && hasSchemaShape) ||
-    (hasOnlySchemaRootKeys && (hasRootSchemaKeyword || hasSchemaProperties(value["properties"])))
+    (hasOnlySchemaRootKeys &&
+      (hasRootSchemaKeyword || hasSchemaProperties(value["properties"]) || hasSchemaProperties(value["patternProperties"])))
   );
 }
 
@@ -228,6 +231,7 @@ const schemaRootKeys = new Set([
   "minimum",
   "oneOf",
   "pattern",
+  "patternProperties",
   "properties",
   "required",
   "title",
@@ -246,6 +250,7 @@ function isSchemaProperty(value: unknown): boolean {
     typeof value["$ref"] === "string" ||
     isSchemaType(value["type"]) ||
     isRecord(value["properties"]) ||
+    isRecord(value["patternProperties"]) ||
     Array.isArray(value["allOf"]) ||
     Array.isArray(value["anyOf"]) ||
     Array.isArray(value["oneOf"]) ||
