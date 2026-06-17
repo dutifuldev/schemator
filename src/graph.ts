@@ -3,7 +3,7 @@ import type { AggregateReview, FieldNode, FieldReview, ModelGraph } from "./type
 const simplifyingDecisions = new Set(["rename", "merge", "derive", "move", "defer", "remove"]);
 
 export function hasSimplification(aggregate: AggregateReview): boolean {
-  return aggregate.decisions.some((review) => simplifyingDecisions.has(review.decision));
+  return aggregate.decisions.some((review) => review.confidence !== "low" && simplifyingDecisions.has(review.decision));
 }
 
 export function applyAggregateToGraph(graph: ModelGraph, aggregate: AggregateReview): ModelGraph {
@@ -20,13 +20,14 @@ export function applyAggregateToGraph(graph: ModelGraph, aggregate: AggregateRev
       const decisions = decisionsByModel.get(model.id) ?? [];
       const renameMap = new Map(
         decisions
-          .filter((decision) => decision.decision === "rename")
+          .filter((decision) => decision.confidence !== "low" && decision.decision === "rename")
           .map((decision) => [decision.fieldPath, finalPathForRename(decision)]),
       );
       const removed = new Set(
         decisions
           .filter((decision) =>
-            decision.decision === "remove" || decision.decision === "derive" || decision.decision === "defer"
+            decision.confidence !== "low" &&
+            (decision.decision === "remove" || decision.decision === "derive" || decision.decision === "defer")
           )
           .map((decision) => decision.fieldPath),
       );

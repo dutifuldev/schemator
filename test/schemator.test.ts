@@ -345,6 +345,44 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts JSON Schema combinator object fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          $schema: "https://json-schema.org/draft/2020-12/schema",
+          type: "object",
+          allOf: [
+            {
+              properties: {
+                id: { type: "string" },
+              },
+              required: ["id"],
+            },
+          ],
+          anyOf: [
+            {
+              properties: {
+                promptRecipe: { type: "string" },
+              },
+              required: ["promptRecipe"],
+            },
+          ],
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
+        ["id", true],
+        ["promptRecipe", false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("detects YAML JSON Schema documents", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -1541,6 +1579,34 @@ describe("schemator", () => {
     );
   });
 
+  test("rejects low-confidence simplifications before reduction", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [field("promptRecipe", "promptRecipe", "string", false)],
+        },
+      ],
+    };
+    const lowConfidenceRename = {
+      ...reviewWithoutFinalPath("promptRecipe", "systemPromptVariant"),
+      confidence: "low" as const,
+    };
+    const aggregate = aggregateReviews(graph, [lowConfidenceRename]);
+
+    expect(aggregate.ok).toBe(false);
+    expect(aggregate.findings.map((finding) => finding.message)).toContain(
+      "Low-confidence simplification decisions require focused follow-up before reduction.",
+    );
+    expect(applyAggregateToGraph(graph, { ...aggregate, ok: true }).models[0]?.fields[0]?.path).toBe(
+      "promptRecipe",
+    );
+  });
+
   test("composes parent and child renames", () => {
     const graph: ModelGraph = {
       schemaVersion: 1,
@@ -1928,6 +1994,34 @@ describe("schemator", () => {
       expect(parent?.fields.map((field) => [field.path, field.objectLike, field.ref])).toEqual([
         ["children", true, "Child"],
         ["readonlyChildren", true, "Child"],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("recognizes TypeScript generic object model references", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Box<T> = {",
+          "  value: T;",
+          "};",
+          "type Parent = {",
+          "  box: Box<string>;",
+          "  boxes: Array<Box<string>>;",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+      const parent = graph.models.find((model) => model.id === "Parent");
+
+      expect(parent?.fields.map((field) => [field.path, field.objectLike, field.ref])).toEqual([
+        ["box", true, "Box"],
+        ["boxes", true, "Box"],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });

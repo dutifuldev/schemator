@@ -552,12 +552,17 @@ function referencedModel(typeText: string, modelNames: Set<string>): string | nu
     if (arrayMatch?.[1] && modelNames.has(arrayMatch[1])) {
       return arrayMatch[1];
     }
-    const genericArrayMatch = /^(?:Array|ReadonlyArray)\s*<\s*([A-Z][A-Za-z0-9_]*)\s*>$/.exec(candidate);
-    if (genericArrayMatch?.[1] && modelNames.has(genericArrayMatch[1])) {
-      return genericArrayMatch[1];
+    const genericArrayMatch = /^(?:Array|ReadonlyArray)\s*<\s*(.+)\s*>$/.exec(candidate);
+    const genericArrayRef = genericArrayMatch?.[1] ? referencedModel(genericArrayMatch[1], modelNames) : null;
+    if (genericArrayRef) {
+      return genericArrayRef;
     }
     if (modelNames.has(candidate)) {
       return candidate;
+    }
+    const genericReferenceMatch = /^([A-Z][A-Za-z0-9_]*)\s*<.+>$/.exec(candidate);
+    if (genericReferenceMatch?.[1] && modelNames.has(genericReferenceMatch[1])) {
+      return genericReferenceMatch[1];
     }
   }
   return null;

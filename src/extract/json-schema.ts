@@ -6,6 +6,9 @@ type JsonSchemaLike = {
   properties?: unknown;
   required?: unknown;
   items?: unknown;
+  allOf?: unknown;
+  anyOf?: unknown;
+  oneOf?: unknown;
   $ref?: unknown;
 };
 
@@ -56,10 +59,14 @@ function visitSchemaObject(
     }
     return;
   }
-  if (!schema || !isRecord(schema.properties)) {
+  if (!schema) {
+    return;
+  }
+  if (!isRecord(schema.properties)) {
     if (schema && hasSchemaType(schema, "array")) {
       const rootItemSchema = itemObjectSchema(schema, root, refStack);
       if (!rootItemSchema) {
+        visitSchemaCombinators(schema, modelId, parentPath, fields, source, root, refStack, ancestorRequired);
         return;
       }
       if (parentPath !== "") {
@@ -73,10 +80,11 @@ function visitSchemaObject(
           withRef(refStack, rootItemSchema.ref),
           ancestorRequired,
         );
+        visitSchemaCombinators(schema, modelId, parentPath, fields, source, root, refStack, ancestorRequired);
         return;
       }
       const rootArrayNullable = hasSchemaType(schema, "null");
-      fields.push({
+      addField(fields, {
         path: "items",
         name: "items",
         type: schemaType(schema),
@@ -97,6 +105,7 @@ function visitSchemaObject(
         !rootArrayNullable,
       );
     }
+    visitSchemaCombinators(schema, modelId, parentPath, fields, source, root, refStack, ancestorRequired);
     return;
   }
 
@@ -124,7 +133,7 @@ function visitSchemaObject(
       Boolean(childSchema && hasSchemaType(childSchema, "object")) ||
       isRecord(childSchema?.properties) ||
       Boolean(itemSchema);
-    fields.push({
+    addField(fields, {
       path,
       name,
       type,
@@ -162,6 +171,43 @@ function visitSchemaObject(
         visitSchemaObject(child, modelId, path, fields, source, root, refStack, descendantRequired);
       }
     }
+  }
+  visitSchemaCombinators(schema, modelId, parentPath, fields, source, root, refStack, ancestorRequired);
+}
+
+function visitSchemaCombinators(
+  schema: JsonSchemaLike,
+  modelId: string,
+  parentPath: string,
+  fields: FieldNode[],
+  source: SourceSpan,
+  root: unknown,
+  refStack: Set<string>,
+  ancestorRequired: boolean,
+): void {
+  for (const value of schemaArray(schema.allOf)) {
+    visitSchemaObject(value, modelId, parentPath, fields, source, root, refStack, ancestorRequired);
+  }
+  for (const value of [...schemaArray(schema.anyOf), ...schemaArray(schema.oneOf)]) {
+    visitSchemaObject(value, modelId, parentPath, fields, source, root, refStack, false);
+  }
+}
+
+function schemaArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function addField(fields: FieldNode[], field: FieldNode): void {
+  const existing = fields.find((candidate) => candidate.path === field.path);
+  if (!existing) {
+    fields.push(field);
+    return;
+  }
+  existing.required = existing.required || field.required;
+  existing.nullable = existing.nullable || field.nullable;
+  existing.objectLike = existing.objectLike || field.objectLike;
+  if (!existing.ref && field.ref) {
+    existing.ref = field.ref;
   }
 }
 

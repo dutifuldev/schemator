@@ -127,6 +127,9 @@ function isJsonSchema(value: unknown): value is Record<string, unknown> {
     isRecord(value["properties"]) ||
     isRecord(value["$defs"]) ||
     isRecord(value["definitions"]) ||
+    Array.isArray(value["allOf"]) ||
+    Array.isArray(value["anyOf"]) ||
+    Array.isArray(value["oneOf"]) ||
     "items" in value;
   return (
     (hasSchemaMetadata && hasSchemaShape) ||

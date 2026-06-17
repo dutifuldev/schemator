@@ -101,6 +101,14 @@ export function aggregateReviews(graph: ModelGraph, reviews: FieldReview[]): Agg
         message: `Decision ${review.decision} is not supported by the v1 graph reducer.`,
       });
     }
+    if (isSimplifyingDecision(review.decision) && review.confidence === "low") {
+      findings.push({
+        severity: "error",
+        model: review.model,
+        fieldPath: review.fieldPath,
+        message: "Low-confidence simplification decisions require focused follow-up before reduction.",
+      });
+    }
     if (!fieldKeys.has(key)) {
       findings.push({
         severity: "error",
@@ -167,6 +175,10 @@ function summarize(reviews: FieldReview[]): Record<Decision | "totalFields", num
     summary[review.decision] += 1;
   }
   return summary;
+}
+
+function isSimplifyingDecision(decision: Decision): boolean {
+  return decision !== "keep" && decision !== "opaque";
 }
 
 function reviewKey(model: string, fieldPath: string): string {
