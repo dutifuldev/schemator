@@ -118,6 +118,14 @@ export function aggregateReviews(graph: ModelGraph, reviews: FieldReview[]): Agg
         message: "Rename decision cannot move fields in the v1 graph reducer.",
       });
     }
+    if (review.decision === "rename" && finalPathForRename(review) !== expectedFinalPathForRename(review)) {
+      findings.push({
+        severity: "error",
+        model: review.model,
+        fieldPath: review.fieldPath,
+        message: "Rename finalPath must match the escaped finalName.",
+      });
+    }
     if (!fieldKeys.has(key)) {
       findings.push({
         severity: "error",
@@ -221,6 +229,10 @@ function isDescendantPath(path: string, parent: string): boolean {
 
 function finalPathForRename(review: FieldReview): string {
   return review.finalPath ?? replaceLastFieldPathSegment(review.fieldPath, review.finalName);
+}
+
+function expectedFinalPathForRename(review: FieldReview): string {
+  return replaceLastFieldPathSegment(review.fieldPath, review.finalName);
 }
 
 function reviewKey(model: string, fieldPath: string): string {

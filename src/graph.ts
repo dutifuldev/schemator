@@ -69,9 +69,13 @@ function isGraphChangingSimplification(review: FieldReview): boolean {
 }
 
 function finalPathForRename(decision: FieldReview): string {
-  const finalPath = decision.finalPath ?? replaceLastFieldPathSegment(decision.fieldPath, decision.finalName);
+  const expectedFinalPath = replaceLastFieldPathSegment(decision.fieldPath, decision.finalName);
+  const finalPath = decision.finalPath ?? expectedFinalPath;
   if (parentFieldPath(finalPath) !== parentFieldPath(decision.fieldPath)) {
     throw new Error(`rename cannot move field ${decision.model}.${decision.fieldPath} to ${finalPath}`);
+  }
+  if (finalPath !== expectedFinalPath) {
+    throw new Error(`rename finalPath for ${decision.model}.${decision.fieldPath} must match finalName ${decision.finalName}`);
   }
   return finalPath;
 }

@@ -3241,6 +3241,50 @@ describe("schemator", () => {
     ).toThrow("rename cannot move field");
   });
 
+  test("rejects rename decisions whose finalPath and finalName disagree", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [field("config.recipe", "recipe", "string", false)],
+        },
+      ],
+    };
+    const mismatchedReview = {
+      ...review("config.recipe", "config.variant"),
+      finalName: "preset",
+    };
+    const aggregate = aggregateReviews(graph, [mismatchedReview]);
+
+    expect(aggregate.ok).toBe(false);
+    expect(aggregate.findings.map((finding) => finding.message)).toContain(
+      "Rename finalPath must match the escaped finalName.",
+    );
+    expect(() =>
+      applyAggregateToGraph(graph, {
+        schemaVersion: 1,
+        ok: true,
+        summary: {
+          totalFields: 1,
+          keep: 0,
+          rename: 1,
+          merge: 0,
+          derive: 0,
+          move: 0,
+          defer: 0,
+          remove: 0,
+          opaque: 0,
+        },
+        findings: [],
+        decisions: [mismatchedReview],
+      }),
+    ).toThrow("must match finalName");
+  });
+
   test("rejects parent removal when a descendant review keeps the child", () => {
     const graph: ModelGraph = {
       schemaVersion: 1,
