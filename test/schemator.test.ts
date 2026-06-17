@@ -658,6 +658,37 @@ describe("schemator", () => {
     }
   });
 
+  test("preserves null alternatives in ordinary JSON array object fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "document.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          items: [
+            {
+              nested: {
+                value: "x",
+              },
+            },
+            {
+              nested: null,
+            },
+          ],
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required, field.nullable])).toEqual([
+        ["items", true, false],
+        ["items[].nested", true, true],
+        ["items[].nested.value", false, false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("keeps nullable TypeScript model references object-like", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {

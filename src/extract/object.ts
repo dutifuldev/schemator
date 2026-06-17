@@ -3,6 +3,7 @@ import type { FieldNode, ModelNode, SourceSpan } from "../types.js";
 type ObjectShape = {
   value: Record<string, unknown>;
   optionalPaths: Set<string>;
+  nullablePaths: Set<string>;
 };
 
 export function extractObjectModel(value: unknown, modelId: string, source: SourceSpan): ModelNode {
@@ -22,7 +23,15 @@ export function extractObjectModel(value: unknown, modelId: string, source: Sour
         objectLike: true,
         source,
       });
-      visitObject(arrayItem.value, modelId, "items[]", fields, source, prefixPaths(arrayItem.optionalPaths, "items[]"));
+      visitObject(
+        arrayItem.value,
+        modelId,
+        "items[]",
+        fields,
+        source,
+        prefixPaths(arrayItem.optionalPaths, "items[]"),
+        prefixPaths(arrayItem.nullablePaths, "items[]"),
+      );
     }
   }
   return {
@@ -62,6 +71,7 @@ function visitObject(
   fields: FieldNode[],
   source: SourceSpan,
   optionalPaths: Set<string> = new Set(),
+  nullablePaths: Set<string> = new Set(),
 ): void {
   for (const [name, child] of Object.entries(value)) {
     const path = parentPath ? `${parentPath}.${name}` : name;
@@ -72,15 +82,23 @@ function visitObject(
       name,
       type: valueType(child),
       required: !optionalPaths.has(path),
-      nullable: child === null,
+      nullable: child === null || nullablePaths.has(path),
       parent: modelId,
       objectLike,
       source,
     });
     if (arrayItem) {
-      visitObject(arrayItem.value, modelId, `${path}[]`, fields, source, mergePathSets(optionalPaths, prefixPaths(arrayItem.optionalPaths, `${path}[]`)));
+      visitObject(
+        arrayItem.value,
+        modelId,
+        `${path}[]`,
+        fields,
+        source,
+        mergePathSets(optionalPaths, prefixPaths(arrayItem.optionalPaths, `${path}[]`)),
+        mergePathSets(nullablePaths, prefixPaths(arrayItem.nullablePaths, `${path}[]`)),
+      );
     } else if (isRecord(child)) {
-      visitObject(child, modelId, path, fields, source, optionalPaths);
+      visitObject(child, modelId, path, fields, source, optionalPaths, nullablePaths);
     }
   }
 }
@@ -114,9 +132,11 @@ function arrayObjectShape(value: unknown): ObjectShape | null {
     (shape, item) => mergeObjectShapes(shape, item),
     {},
   );
+  const facts = pathFactsForObjects(objects, shape, "");
   return {
     value: shape,
-    optionalPaths: optionalPathsForObjects(objects, shape, ""),
+    optionalPaths: facts.optionalPaths,
+    nullablePaths: facts.nullablePaths,
   };
 }
 
@@ -146,25 +166,40 @@ function mergeShapeValue(left: unknown, right: unknown): unknown {
   return isRecord(right) && !isRecord(left) ? right : left;
 }
 
-function optionalPathsForObjects(
+function pathFactsForObjects(
   objects: Record<string, unknown>[],
   shape: Record<string, unknown>,
   parentPath: string,
-): Set<string> {
+): Pick<ObjectShape, "optionalPaths" | "nullablePaths"> {
   const optionalPaths = new Set<string>();
+  const nullablePaths = new Set<string>();
   for (const [key, value] of Object.entries(shape)) {
     const path = parentPath ? `${parentPath}.${key}` : key;
     const presentValues = objects.filter((object) => key in object).map((object) => object[key]);
     const missingFromSomeObjects = presentValues.length !== objects.length;
+    const nullableInSomeObjects = presentValues.some((item) => item === null);
     if (missingFromSomeObjects) {
       optionalPaths.add(path);
       for (const descendant of descendantPaths(value, path)) {
         optionalPaths.add(descendant);
       }
     }
+    if (nullableInSomeObjects) {
+      nullablePaths.add(path);
+    }
     if (isRecord(value)) {
-      for (const nested of optionalPathsForObjects(presentValues.filter(isRecord), value, path)) {
+      const recordValues = presentValues.filter(isRecord);
+      if (recordValues.length !== presentValues.length) {
+        for (const descendant of descendantPaths(value, path)) {
+          optionalPaths.add(descendant);
+        }
+      }
+      const nestedFacts = pathFactsForObjects(recordValues, value, path);
+      for (const nested of nestedFacts.optionalPaths) {
         optionalPaths.add(nested);
+      }
+      for (const nested of nestedFacts.nullablePaths) {
+        nullablePaths.add(nested);
       }
     }
     const arrayShape = arrayObjectShape(value);
@@ -172,9 +207,12 @@ function optionalPathsForObjects(
       for (const nested of prefixPaths(arrayShape.optionalPaths, `${path}[]`)) {
         optionalPaths.add(nested);
       }
+      for (const nested of prefixPaths(arrayShape.nullablePaths, `${path}[]`)) {
+        nullablePaths.add(nested);
+      }
     }
   }
-  return optionalPaths;
+  return { optionalPaths, nullablePaths };
 }
 
 function descendantPaths(value: unknown, parentPath: string): Set<string> {
