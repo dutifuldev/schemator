@@ -832,6 +832,136 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts TypeScript interface fields inherited from type aliases", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Base = {",
+          "  id: string;",
+          "  settings?: {",
+          "    promptRecipe?: string;",
+          "  };",
+          "};",
+          "interface User extends Base {",
+          "  name: string;",
+          "}",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+      const user = graph.models.find((model) => model.id === "User");
+
+      expect(user?.fields.map((field) => field.path)).toEqual([
+        "id",
+        "settings",
+        "settings.promptRecipe",
+        "name",
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("extracts top-level TypeScript object union aliases", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Event =",
+          "  | {",
+          "      kind: \"created\";",
+          "      id: string;",
+          "    }",
+          "  | {",
+          "      kind: \"deleted\";",
+          "      reason?: string;",
+          "    };",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.kind).toBe("object");
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
+        ["kind", true],
+        ["id", false],
+        ["reason", false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("extracts every TypeScript nested object union variant", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Event = {",
+          "  payload: {",
+          "    kind: \"a\";",
+          "    a: string;",
+          "  } | {",
+          "    kind: \"b\";",
+          "    b: string;",
+          "  };",
+          "  items: Array<{",
+          "    x: string;",
+          "  } | {",
+          "    y: string;",
+          "  }>;",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
+        ["payload", true],
+        ["payload.kind", true],
+        ["payload.a", false],
+        ["payload.b", false],
+        ["items", true],
+        ["items[].x", false],
+        ["items[].y", false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("uses AST nullish branches for TypeScript nullable metadata", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type nullableString = string;",
+          "type Foo = {",
+          "  status: \"null\" | \"ok\";",
+          "  value: nullableString;",
+          "  maybe: string | null;",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+      const foo = graph.models.find((model) => model.id === "Foo");
+
+      expect(foo?.fields.map((field) => [field.path, field.nullable])).toEqual([
+        ["status", false],
+        ["value", false],
+        ["maybe", true],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts nullable TypeScript inline object unions", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {

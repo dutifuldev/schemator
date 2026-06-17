@@ -14,12 +14,12 @@ export function extractTypeScriptModels(
   const sourceFile = ts.createSourceFile(sourcePath, code, ts.ScriptTarget.Latest, true);
   const declarations = collectDeclarations(sourceFile);
   const objectModelNames = extractObjectModelNames(declarations);
-  const interfaceDeclarations = collectInterfaceDeclarations(declarations);
+  const objectDeclarations = collectObjectDeclarations(declarations);
   for (const modelName of knownObjectModelNames) {
     objectModelNames.add(modelName);
   }
   return declarations.map((declaration) =>
-    declarationToModel(declaration, sourceFile, sourcePath, startLine, objectModelNames, interfaceDeclarations)
+    declarationToModel(declaration, sourceFile, sourcePath, startLine, objectModelNames, objectDeclarations)
   );
 }
 
@@ -46,14 +46,14 @@ function extractObjectModelNames(declarations: Declaration[]): Set<string> {
   );
 }
 
-function collectInterfaceDeclarations(declarations: Declaration[]): Map<string, ts.InterfaceDeclaration> {
-  const interfaces = new Map<string, ts.InterfaceDeclaration>();
+function collectObjectDeclarations(declarations: Declaration[]): Map<string, Declaration> {
+  const objects = new Map<string, Declaration>();
   for (const declaration of declarations) {
-    if (ts.isInterfaceDeclaration(declaration)) {
-      interfaces.set(declaration.name.text, declaration);
+    if (declarationHasMembers(declaration)) {
+      objects.set(declaration.name.text, declaration);
     }
   }
-  return interfaces;
+  return objects;
 }
 
 function declarationToModel(
@@ -62,12 +62,12 @@ function declarationToModel(
   sourcePath: string,
   startLine: number,
   modelNames: Set<string>,
-  interfaceDeclarations: Map<string, ts.InterfaceDeclaration>,
+  objectDeclarations: Map<string, Declaration>,
 ): ModelNode {
   const id = declaration.name.text;
   const fields: FieldNode[] = [];
-  const members = membersForDeclaration(declaration);
-  if (members) {
+  const memberGroups = memberGroupsForDeclaration(declaration);
+  if (memberGroups.length > 0) {
     if (ts.isInterfaceDeclaration(declaration)) {
       addInheritedInterfaceFields(
         declaration,
@@ -76,16 +76,12 @@ function declarationToModel(
         sourcePath,
         startLine,
         modelNames,
-        interfaceDeclarations,
+        objectDeclarations,
         fields,
         new Set([id]),
       );
     }
-    for (const member of members) {
-      if (ts.isPropertySignature(member)) {
-        addPropertyFieldIfAbsent(member, "", id, sourceFile, sourcePath, startLine, modelNames, fields);
-      }
-    }
+    addMemberGroupsFields(memberGroups, "", id, sourceFile, sourcePath, startLine, modelNames, fields);
   } else if (ts.isTypeAliasDeclaration(declaration)) {
     addArrayAliasFields(declaration, sourceFile, sourcePath, startLine, modelNames, fields);
   }
@@ -104,7 +100,7 @@ function addInheritedInterfaceFields(
   sourcePath: string,
   startLine: number,
   modelNames: Set<string>,
-  interfaceDeclarations: Map<string, ts.InterfaceDeclaration>,
+  objectDeclarations: Map<string, Declaration>,
   fields: FieldNode[],
   seenInterfaces: Set<string>,
 ): void {
@@ -112,27 +108,25 @@ function addInheritedInterfaceFields(
     if (seenInterfaces.has(baseName)) {
       continue;
     }
-    const base = interfaceDeclarations.get(baseName);
+    const base = objectDeclarations.get(baseName);
     if (!base) {
       continue;
     }
     seenInterfaces.add(baseName);
-    addInheritedInterfaceFields(
-      base,
-      modelId,
-      sourceFile,
-      sourcePath,
-      startLine,
-      modelNames,
-      interfaceDeclarations,
-      fields,
-      seenInterfaces,
-    );
-    for (const member of base.members) {
-      if (ts.isPropertySignature(member)) {
-        addPropertyFieldIfAbsent(member, "", modelId, sourceFile, sourcePath, startLine, modelNames, fields);
-      }
+    if (ts.isInterfaceDeclaration(base)) {
+      addInheritedInterfaceFields(
+        base,
+        modelId,
+        sourceFile,
+        sourcePath,
+        startLine,
+        modelNames,
+        objectDeclarations,
+        fields,
+        seenInterfaces,
+      );
     }
+    addMemberGroupsFields(memberGroupsForDeclaration(base), "", modelId, sourceFile, sourcePath, startLine, modelNames, fields);
   }
 }
 
@@ -142,18 +136,21 @@ function extendedInterfaceNames(declaration: ts.InterfaceDeclaration, sourceFile
     .flatMap((clause) => clause.types.map((heritageType) => heritageType.expression.getText(sourceFile)));
 }
 
-function membersForDeclaration(declaration: Declaration): ts.NodeArray<ts.TypeElement> | null {
+function memberGroupsForDeclaration(declaration: Declaration): ts.NodeArray<ts.TypeElement>[] {
   if (ts.isInterfaceDeclaration(declaration)) {
-    return declaration.members;
+    return [declaration.members];
   }
   if (ts.isTypeLiteralNode(declaration.type)) {
-    return declaration.type.members;
+    return [declaration.type.members];
   }
-  return null;
+  if (ts.isUnionTypeNode(unwrapParenthesizedType(declaration.type))) {
+    return typeLiterals(nonNullableTypeNodes(declaration.type)).map((typeLiteral) => typeLiteral.members);
+  }
+  return [];
 }
 
 function declarationHasMembers(declaration: Declaration): boolean {
-  return membersForDeclaration(declaration) !== null;
+  return memberGroupsForDeclaration(declaration).length > 0;
 }
 
 function declarationIsArrayAlias(declaration: Declaration): boolean {
@@ -165,6 +162,9 @@ function modelKind(declaration: Declaration): ModelKind {
     return "object";
   }
   if (ts.isTypeLiteralNode(declaration.type)) {
+    return "object";
+  }
+  if (declarationHasMembers(declaration)) {
     return "object";
   }
   if (ts.isUnionTypeNode(declaration.type)) {
@@ -193,23 +193,28 @@ function addArrayAliasFields(
   }
   const elementCandidates = nonNullableTypeNodes(elementType);
   const ref = referencedModelFromTypeCandidates(elementCandidates, sourceFile, modelNames);
-  const inlineObjectType = firstTypeLiteral(elementCandidates);
-  const objectLike = Boolean(ref) || Boolean(inlineObjectType);
+  const inlineObjectTypes = typeLiterals(elementCandidates);
+  const objectLike = Boolean(ref) || inlineObjectTypes.length > 0;
   fields.push({
     path: "items",
     name: "items",
     type: declaration.type.getText(sourceFile),
     required: true,
-    nullable: declaration.type.getText(sourceFile).includes("null"),
+    nullable: typeAllowsNullish(declaration.type),
     parent: declaration.name.text,
     objectLike,
     source: spanForNode(declaration, sourceFile, sourcePath, startLine),
     ...(ref ? { ref } : {}),
   });
-  if (inlineObjectType) {
-    addTypeLiteralFields(inlineObjectType, "items[]", declaration.name.text, sourceFile, sourcePath, startLine, modelNames, fields);
+  if (inlineObjectTypes.length > 0) {
+    addTypeLiteralVariantFields(inlineObjectTypes, "items[]", declaration.name.text, sourceFile, sourcePath, startLine, modelNames, fields);
   }
 }
+
+type AddPropertyFieldOptions = {
+  addNested?: boolean;
+  required?: boolean;
+};
 
 function addPropertyField(
   member: ts.PropertySignature,
@@ -220,6 +225,7 @@ function addPropertyField(
   startLine: number,
   modelNames: Set<string>,
   fields: FieldNode[],
+  options: AddPropertyFieldOptions = {},
 ): void {
   const name = propertyNameText(member.name);
   if (!name) {
@@ -230,28 +236,31 @@ function addPropertyField(
   const type = typeNode?.getText(sourceFile) ?? "unknown";
   const typeCandidates = typeNode ? nonNullableTypeNodes(typeNode) : [];
   const ref = referencedModelFromTypeCandidates(typeCandidates, sourceFile, modelNames) ?? referencedModel(type, modelNames);
-  const inlineObjectType = firstTypeLiteral(typeCandidates);
-  const inlineArrayObjectType = typeCandidates
+  const inlineObjectTypes = typeLiterals(typeCandidates);
+  const inlineArrayObjectTypes = typeCandidates
     .map(arrayElementTypeNode)
     .flatMap((candidate) => candidate ? nonNullableTypeNodes(candidate) : [])
-    .find((candidate): candidate is ts.TypeLiteralNode => ts.isTypeLiteralNode(candidate));
-  const objectLike = Boolean(ref) || Boolean(inlineObjectType) || Boolean(inlineArrayObjectType);
+    .filter((candidate): candidate is ts.TypeLiteralNode => ts.isTypeLiteralNode(candidate));
+  const objectLike = Boolean(ref) || inlineObjectTypes.length > 0 || inlineArrayObjectTypes.length > 0;
   fields.push({
     path,
     name,
     type,
-    required: !member.questionToken,
-    nullable: type.includes("null"),
+    required: options.required ?? !member.questionToken,
+    nullable: typeNode ? typeAllowsNullish(typeNode) : false,
     parent: modelId,
     objectLike,
     source: spanForNode(member, sourceFile, sourcePath, startLine),
     ...(ref ? { ref } : {}),
   });
 
-  const nestedType = inlineArrayObjectType ?? inlineObjectType;
-  if (nestedType) {
-    const nestedParentPath = inlineArrayObjectType ? `${path}[]` : path;
-    addTypeLiteralFields(nestedType, nestedParentPath, modelId, sourceFile, sourcePath, startLine, modelNames, fields);
+  if (options.addNested !== false) {
+    if (inlineObjectTypes.length > 0) {
+      addTypeLiteralVariantFields(inlineObjectTypes, path, modelId, sourceFile, sourcePath, startLine, modelNames, fields);
+    }
+    if (inlineArrayObjectTypes.length > 0) {
+      addTypeLiteralVariantFields(inlineArrayObjectTypes, `${path}[]`, modelId, sourceFile, sourcePath, startLine, modelNames, fields);
+    }
   }
 }
 
@@ -276,8 +285,8 @@ function addPropertyFieldIfAbsent(
   addPropertyField(member, parentPath, modelId, sourceFile, sourcePath, startLine, modelNames, fields);
 }
 
-function addTypeLiteralFields(
-  typeNode: ts.TypeLiteralNode,
+function addMemberGroupsFields(
+  memberGroups: ts.NodeArray<ts.TypeElement>[],
   parentPath: string,
   modelId: string,
   sourceFile: ts.SourceFile,
@@ -286,15 +295,77 @@ function addTypeLiteralFields(
   modelNames: Set<string>,
   fields: FieldNode[],
 ): void {
-  for (const nested of typeNode.members) {
-    if (ts.isPropertySignature(nested)) {
-      addPropertyFieldIfAbsent(nested, parentPath, modelId, sourceFile, sourcePath, startLine, modelNames, fields);
+  if (memberGroups.length === 1) {
+    for (const nested of memberGroups[0] ?? []) {
+      if (ts.isPropertySignature(nested)) {
+        addPropertyFieldIfAbsent(nested, parentPath, modelId, sourceFile, sourcePath, startLine, modelNames, fields);
+      }
+    }
+    return;
+  }
+
+  const seen = new Set<string>();
+  for (const group of memberGroups) {
+    for (const member of group) {
+      if (!ts.isPropertySignature(member)) {
+        continue;
+      }
+      const name = propertyNameText(member.name);
+      if (!name || seen.has(name)) {
+        continue;
+      }
+      seen.add(name);
+      const occurrences = memberGroups
+        .map((candidateGroup) => candidateGroup.find((candidate): candidate is ts.PropertySignature =>
+          ts.isPropertySignature(candidate) && propertyNameText(candidate.name) === name
+        ))
+        .filter((candidate): candidate is ts.PropertySignature => Boolean(candidate));
+      const required = occurrences.length === memberGroups.length && occurrences.every((candidate) => !candidate.questionToken);
+      addPropertyField(member, parentPath, modelId, sourceFile, sourcePath, startLine, modelNames, fields, {
+        addNested: false,
+        required,
+      });
+      const path = parentPath ? `${parentPath}.${name}` : name;
+      const inlineObjectTypes = occurrences.flatMap((candidate) => propertyInlineObjectTypes(candidate));
+      if (inlineObjectTypes.length > 0) {
+        addTypeLiteralVariantFields(inlineObjectTypes, path, modelId, sourceFile, sourcePath, startLine, modelNames, fields);
+      }
+      const inlineArrayObjectTypes = occurrences.flatMap((candidate) => propertyInlineArrayObjectTypes(candidate));
+      if (inlineArrayObjectTypes.length > 0) {
+        addTypeLiteralVariantFields(inlineArrayObjectTypes, `${path}[]`, modelId, sourceFile, sourcePath, startLine, modelNames, fields);
+      }
     }
   }
 }
 
-function firstTypeLiteral(typeNodes: ts.TypeNode[]): ts.TypeLiteralNode | undefined {
-  return typeNodes.find((candidate): candidate is ts.TypeLiteralNode => ts.isTypeLiteralNode(candidate));
+function addTypeLiteralVariantFields(
+  typeNodes: ts.TypeLiteralNode[],
+  parentPath: string,
+  modelId: string,
+  sourceFile: ts.SourceFile,
+  sourcePath: string,
+  startLine: number,
+  modelNames: Set<string>,
+  fields: FieldNode[],
+): void {
+  addMemberGroupsFields(typeNodes.map((typeNode) => typeNode.members), parentPath, modelId, sourceFile, sourcePath, startLine, modelNames, fields);
+}
+
+function propertyInlineObjectTypes(member: ts.PropertySignature): ts.TypeLiteralNode[] {
+  return member.type ? typeLiterals(nonNullableTypeNodes(member.type)) : [];
+}
+
+function propertyInlineArrayObjectTypes(member: ts.PropertySignature): ts.TypeLiteralNode[] {
+  if (!member.type) {
+    return [];
+  }
+  return nonNullableTypeNodes(member.type)
+    .map(arrayElementTypeNode)
+    .flatMap((candidate) => candidate ? typeLiterals(nonNullableTypeNodes(candidate)) : []);
+}
+
+function typeLiterals(typeNodes: ts.TypeNode[]): ts.TypeLiteralNode[] {
+  return typeNodes.filter((candidate): candidate is ts.TypeLiteralNode => ts.isTypeLiteralNode(candidate));
 }
 
 function propertyNameText(name: ts.PropertyName): string | null {
@@ -312,6 +383,14 @@ function nonNullableTypeNodes(typeNode: ts.TypeNode): ts.TypeNode[] {
   return unwrapped.types
     .map(unwrapParenthesizedType)
     .filter((candidate) => !isNullishTypeNode(candidate));
+}
+
+function typeAllowsNullish(typeNode: ts.TypeNode): boolean {
+  const unwrapped = unwrapParenthesizedType(typeNode);
+  if (ts.isUnionTypeNode(unwrapped)) {
+    return unwrapped.types.map(unwrapParenthesizedType).some(isNullishTypeNode);
+  }
+  return isNullishTypeNode(unwrapped);
 }
 
 function unwrapParenthesizedType(typeNode: ts.TypeNode): ts.TypeNode {
