@@ -8,6 +8,10 @@ import { extractJsonSchemaModel } from "./json-schema.js";
 import { extractObjectModel, modelIdForObject } from "./object.js";
 import { collectTypeScriptObjectModelNames, extractTypeScriptModels } from "./typescript.js";
 
+type JsonSourceFileWithDiagnostics = ts.JsonSourceFile & {
+  parseDiagnostics: readonly ts.Diagnostic[];
+};
+
 export async function extractGraph(sourcePath: string): Promise<ModelGraph> {
   const text = await readText(sourcePath);
   const extension = extname(sourcePath).toLowerCase();
@@ -98,7 +102,8 @@ function extractMarkdownModels(text: string, sourcePath: string): ModelNode[] {
 function jsonLikeToModel(value: unknown, fallbackId: string, source: SourceSpan): ModelNode {
   if (isJsonSchema(value)) {
     const title = value["title"];
-    return extractJsonSchemaModel(value, typeof title === "string" ? title : fallbackId, source);
+    const modelId = typeof title === "string" && title.trim() ? title : fallbackId;
+    return extractJsonSchemaModel(value, modelId, source);
   }
   return extractObjectModel(value, modelIdForObject(value, fallbackId), source);
 }
@@ -112,8 +117,62 @@ function parseJsonLike(code: string): unknown | null {
 }
 
 function parseJsoncLike(code: string): unknown | null {
-  const parsed = ts.parseConfigFileTextToJson("schema.jsonc", code);
-  return parsed.error ? null : parsed.config as unknown;
+  const parsed = ts.parseJsonText("schema.jsonc", code);
+  if ((parsed as JsonSourceFileWithDiagnostics).parseDiagnostics.length > 0) {
+    return null;
+  }
+  const statement = parsed.statements[0];
+  if (!statement || !ts.isExpressionStatement(statement)) {
+    return null;
+  }
+  return jsoncExpressionValue(statement.expression);
+}
+
+function jsoncExpressionValue(expression: ts.Expression): unknown | null {
+  if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) {
+    return expression.text;
+  }
+  if (ts.isNumericLiteral(expression)) {
+    return Number(expression.text);
+  }
+  if (expression.kind === ts.SyntaxKind.TrueKeyword) {
+    return true;
+  }
+  if (expression.kind === ts.SyntaxKind.FalseKeyword) {
+    return false;
+  }
+  if (expression.kind === ts.SyntaxKind.NullKeyword) {
+    return null;
+  }
+  if (ts.isPrefixUnaryExpression(expression) && expression.operator === ts.SyntaxKind.MinusToken) {
+    const operand = jsoncExpressionValue(expression.operand);
+    return typeof operand === "number" ? -operand : null;
+  }
+  if (ts.isArrayLiteralExpression(expression)) {
+    return expression.elements.map((element) => jsoncExpressionValue(element));
+  }
+  if (ts.isObjectLiteralExpression(expression)) {
+    const object: Record<string, unknown> = {};
+    for (const property of expression.properties) {
+      if (!ts.isPropertyAssignment(property)) {
+        return null;
+      }
+      const name = jsoncPropertyName(property.name);
+      if (name === null) {
+        return null;
+      }
+      object[name] = jsoncExpressionValue(property.initializer);
+    }
+    return object;
+  }
+  return null;
+}
+
+function jsoncPropertyName(name: ts.PropertyName): string | null {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) {
+    return name.text;
+  }
+  return null;
 }
 
 function isJsonSchema(value: unknown): value is Record<string, unknown> {

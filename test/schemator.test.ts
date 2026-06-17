@@ -323,6 +323,29 @@ describe("schemator", () => {
     }
   });
 
+  test("uses fallback model id for empty JSON Schema titles", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          title: "  ",
+          type: "object",
+          properties: {
+            id: { type: "string" },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.id).toBe("JsonSchema");
+      expect(graph.models[0]?.fields[0]?.parent).toBe("JsonSchema");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("propagates required JSON Schema array parents to item fields", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -1164,6 +1187,30 @@ describe("schemator", () => {
       const graph = await extractGraph(source);
 
       expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["promptRecipe"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("extracts Markdown JSONC array fences", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "proposal.md");
+      await writeFile(
+        source,
+        [
+          "```jsonc",
+          "[",
+          '  { "id": "a" },',
+          "  // comments and trailing commas are valid JSONC",
+          '  { "name": "b" },',
+          "]",
+          "```",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["items", "items[].id", "items[].name"]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
