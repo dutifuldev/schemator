@@ -11,6 +11,12 @@ until no reviewer can simplify the model further.
 The skill remains the agent-facing workflow. The tool becomes the deterministic
 execution and validation layer behind that workflow.
 
+The agent is still responsible for writing the first draft of the schema.
+Schemator does not need to invent the initial data model. Its job begins after a
+draft exists: parse the draft, enumerate every proposed field or column, force
+review coverage, apply simplifications, and verify that the final schema still
+covers the stated requirements.
+
 ## Core Principle
 
 Do not rely on an agent to remember every nested field.
@@ -19,6 +25,32 @@ The extractor must enumerate the model graph. Every field, nested field, column,
 selector key, policy key, JSON Schema property, SQL column, and object-like
 subfield must become an explicit review item or an explicit opaque exemption.
 
+Extraction is a coverage guardrail, not an authoring step. It converts an
+agent-authored draft such as:
+
+```json
+{
+  "profile": {
+    "name": "claude",
+    "settings": {
+      "temperature": 0.7
+    }
+  }
+}
+```
+
+into explicit review targets:
+
+```text
+profile
+profile.name
+profile.settings
+profile.settings.temperature
+```
+
+Validation can then fail mechanically when a review covers `profile.name` but
+misses `profile.settings.temperature`.
+
 Markdown is a report format, not the source of truth.
 
 ## Architecture
@@ -26,6 +58,12 @@ Markdown is a report format, not the source of truth.
 ### 1. Extract
 
 Parse source schemas and produce a normalized JSON field graph.
+
+Inputs are drafts authored by an agent or a human: JSON Schema files, SQL
+migrations, TypeScript interfaces, OpenAPI schemas, Markdown proposal snippets,
+or similar artifacts. The extractor does not decide whether a field belongs in
+the model. It only records what exists, where it came from, how it is nested,
+and what review item must be produced for it.
 
 Supported sources, in priority order:
 
@@ -46,6 +84,10 @@ Use real parsers where available:
 
 Initial MVP may support fewer extractors, but the field graph contract should
 not change when new extractors are added.
+
+The first implementation should optimize for proving review coverage over
+schema generation. A narrow extractor that reliably finds every field in one
+source format is more valuable than a broad extractor that misses nested keys.
 
 ### 2. Normalize
 
