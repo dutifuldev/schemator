@@ -133,7 +133,7 @@ function isJsonSchema(value: unknown): value is Record<string, unknown> {
     "items" in value;
   return (
     (hasSchemaMetadata && hasSchemaShape) ||
-    (isRecord(value["properties"]) && (isSchemaType(value["type"]) || Array.isArray(value["required"])))
+    isRecord(value["properties"])
   );
 }
 

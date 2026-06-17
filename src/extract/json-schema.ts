@@ -128,11 +128,7 @@ function visitSchemaObject(
     const itemSchema = childSchema && hasSchemaType(childSchema, "array")
       ? itemObjectSchema(childSchema, root, refStack)
       : null;
-    const objectLike =
-      Boolean(refSchema && hasNestedSchema(refSchema.value, root, withRef(refStack, refSchema.ref))) ||
-      Boolean(childSchema && hasSchemaType(childSchema, "object")) ||
-      isRecord(childSchema?.properties) ||
-      Boolean(itemSchema);
+    const objectLike = Boolean(childSchema && hasNestedSchema(childSchema, root, refStack));
     addField(fields, {
       path,
       name,
@@ -235,7 +231,15 @@ function hasNestedSchema(value: unknown, root: unknown, refStack: Set<string>): 
     const refSchema = resolveRefSchema(root, schema.$ref, refStack);
     return Boolean(refSchema && hasNestedSchema(refSchema.value, root, withRef(refStack, refSchema.ref)));
   }
-  return isRecord(schema.properties) || hasSchemaType(schema, "object") || Boolean(itemObjectSchema(schema, root, refStack));
+  return (
+    isRecord(schema.properties) ||
+    hasSchemaType(schema, "object") ||
+    Boolean(itemObjectSchema(schema, root, refStack)) ||
+    schemaArray(schema.allOf).some((item) => hasNestedSchema(item, root, refStack)) ||
+    [...schemaArray(schema.anyOf), ...schemaArray(schema.oneOf)].some((item) =>
+      hasNestedSchema(item, root, refStack)
+    )
+  );
 }
 
 function schemaType(value: unknown): string {

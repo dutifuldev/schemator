@@ -39,11 +39,13 @@ function collectDeclarations(sourceFile: ts.SourceFile): Declaration[] {
 }
 
 function extractObjectModelNames(declarations: Declaration[]): Set<string> {
-  return new Set(
-    declarations
-      .filter((declaration) => declarationHasMembers(declaration) || declarationIsArrayAlias(declaration))
-      .map((declaration) => declaration.name.text),
-  );
+  const names = new Set(collectObjectDeclarations(declarations).keys());
+  for (const declaration of declarations) {
+    if (declarationIsArrayAlias(declaration)) {
+      names.add(declaration.name.text);
+    }
+  }
+  return names;
 }
 
 function collectObjectDeclarations(declarations: Declaration[]): Map<string, Declaration> {
@@ -51,6 +53,19 @@ function collectObjectDeclarations(declarations: Declaration[]): Map<string, Dec
   for (const declaration of declarations) {
     if (declarationHasMembers(declaration)) {
       objects.set(declaration.name.text, declaration);
+    }
+  }
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const declaration of declarations) {
+      if (objects.has(declaration.name.text)) {
+        continue;
+      }
+      if (declarationResolvesToObject(declaration, objects)) {
+        objects.set(declaration.name.text, declaration);
+        changed = true;
+      }
     }
   }
   return objects;
@@ -87,10 +102,18 @@ function declarationToModel(
   }
   return {
     id,
-    kind: modelKind(declaration),
+    kind: modelKind(declaration, objectDeclarations),
     source: spanForNode(declaration, sourceFile, sourcePath, startLine),
     fields,
   };
+}
+
+function declarationResolvesToObject(
+  declaration: Declaration,
+  objectDeclarations: Map<string, Declaration>,
+): boolean {
+  return ts.isTypeAliasDeclaration(declaration) &&
+    memberGroupsForDeclaration(declaration, objectDeclarations, new Set([declaration.name.text])).length > 0;
 }
 
 function addInheritedInterfaceFields(
@@ -169,7 +192,7 @@ function declarationIsArrayAlias(declaration: Declaration): boolean {
   return ts.isTypeAliasDeclaration(declaration) && Boolean(arrayElementTypeNode(declaration.type));
 }
 
-function modelKind(declaration: Declaration): ModelKind {
+function modelKind(declaration: Declaration, objectDeclarations: Map<string, Declaration>): ModelKind {
   if (ts.isInterfaceDeclaration(declaration)) {
     return "object";
   }
@@ -177,6 +200,9 @@ function modelKind(declaration: Declaration): ModelKind {
     return "object";
   }
   if (declarationHasMembers(declaration)) {
+    return "object";
+  }
+  if (memberGroupsForDeclaration(declaration, objectDeclarations, new Set([declaration.name.text])).length > 0) {
     return "object";
   }
   if (ts.isUnionTypeNode(declaration.type)) {

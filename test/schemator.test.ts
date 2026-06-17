@@ -383,6 +383,41 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts JSON Schema child combinator object fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          properties: {
+            config: {
+              allOf: [
+                {
+                  type: "object",
+                  properties: {
+                    id: { type: "string" },
+                  },
+                  required: ["id"],
+                },
+              ],
+            },
+          },
+          required: ["config"],
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.objectLike, field.required])).toEqual([
+        ["config", true, true],
+        ["config.id", false, true],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("detects YAML JSON Schema documents", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -637,26 +672,21 @@ describe("schemator", () => {
     }
   });
 
-  test("does not treat ordinary JSON properties field as JSON Schema", async () => {
+  test("recognizes property-only JSON Schemas", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
-      const source = join(dir, "document.json");
+      const source = join(dir, "schema.json");
       await writeFile(
         source,
         JSON.stringify({
-          id: "example",
           properties: {
-            promptRecipe: "standard-v1",
+            id: { type: "string" },
           },
         }),
       );
       const graph = await extractGraph(source);
 
-      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual([
-        "id",
-        "properties",
-        "properties.promptRecipe",
-      ]);
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["id"]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -905,6 +935,36 @@ describe("schemator", () => {
 
       expect(child?.objectLike).toBe(true);
       expect(child?.ref).toBe("Child");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("recognizes TypeScript object aliases as model refs", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Child = {",
+          "  id: string;",
+          "};",
+          "type Parent = Child;",
+          "type Wrapper = {",
+          "  parent: Parent;",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+      const parent = graph.models.find((model) => model.id === "Parent");
+      const wrapper = graph.models.find((model) => model.id === "Wrapper");
+
+      expect(parent?.kind).toBe("object");
+      expect(parent?.fields.map((field) => field.path)).toEqual(["id"]);
+      expect(wrapper?.fields.map((field) => [field.path, field.objectLike, field.ref])).toEqual([
+        ["parent", true, "Parent"],
+      ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
