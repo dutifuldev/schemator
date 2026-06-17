@@ -1,9 +1,10 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileNamePart, writeText } from "./files.js";
 import type { FieldNode, ModelGraph, ModelNode } from "./types.js";
 
 export async function writeReviewJobs(graph: ModelGraph, outputDir: string): Promise<void> {
+  await rm(outputDir, { recursive: true, force: true });
   await mkdir(outputDir, { recursive: true });
   for (const model of graph.models) {
     for (const field of model.fields) {

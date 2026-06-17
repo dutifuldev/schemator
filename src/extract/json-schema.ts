@@ -46,7 +46,10 @@ function visitSchemaObject(
     const childSchema = asSchema(child);
     const path = parentPath ? `${parentPath}.${name}` : name;
     const type = schemaType(childSchema ?? child);
-    const objectLike = childSchema?.type === "object" || isRecord(childSchema?.properties);
+    const objectLike =
+      childSchema?.type === "object" ||
+      isRecord(childSchema?.properties) ||
+      Boolean(childSchema?.type === "array" && itemObjectSchema(childSchema));
     fields.push({
       path,
       name,
@@ -59,9 +62,26 @@ function visitSchemaObject(
       ...(typeof childSchema?.$ref === "string" ? { ref: childSchema.$ref } : {}),
     });
     if (objectLike) {
-      visitSchemaObject(child, modelId, path, fields, source);
+      const itemSchema = childSchema?.type === "array" ? itemObjectSchema(childSchema) : null;
+      if (itemSchema) {
+        visitSchemaObject(itemSchema, modelId, `${path}[]`, fields, source);
+      } else {
+        visitSchemaObject(child, modelId, path, fields, source);
+      }
     }
   }
+}
+
+function itemObjectSchema(schema: JsonSchemaLike): unknown | null {
+  const items = schema.items;
+  const itemSchema = asSchema(items);
+  if (!itemSchema) {
+    return null;
+  }
+  if (itemSchema.type === "object" || isRecord(itemSchema.properties)) {
+    return items;
+  }
+  return null;
 }
 
 function schemaType(value: unknown): string {

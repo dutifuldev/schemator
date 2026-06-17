@@ -85,6 +85,9 @@ function hasNestedCoverage(graph: ModelGraph, modelId: string, fieldPath: string
   if (model?.fields.some((field) => field.path.startsWith(`${fieldPath}.`))) {
     return true;
   }
+  if (model?.fields.some((field) => field.path.startsWith(`${fieldPath}[].`))) {
+    return true;
+  }
   if (ref) {
     const referenced = graph.models.find((candidate) => candidate.id === ref);
     return Boolean(referenced && referenced.fields.length > 0);

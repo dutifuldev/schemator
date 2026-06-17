@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { aggregateReviews } from "../src/aggregate.js";
 import { extractGraph } from "../src/extract/index.js";
+import { pathToFileNamePart } from "../src/files.js";
 import { applyAggregateToGraph, hasSimplification } from "../src/graph.js";
 import { writeDeterministicReviews } from "../src/review.js";
 
@@ -107,5 +108,38 @@ describe("schemator", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  test("extracts JSON Schema array item fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          properties: {
+            items: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                },
+              },
+            },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["items", "items[].id"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("uses collision-free artifact filename parts", () => {
+    expect(pathToFileNamePart("a/b")).not.toBe(pathToFileNamePart("a_b"));
   });
 });

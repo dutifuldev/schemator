@@ -23,5 +23,5 @@ export function resolvePath(path: string): string {
 }
 
 export function pathToFileNamePart(value: string): string {
-  return value.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+  return `b64_${Buffer.from(value, "utf8").toString("base64url")}`;
 }
