@@ -633,6 +633,34 @@ describe("schemator", () => {
     }
   });
 
+  test("propagates JSON Schema allOf required fields across branches", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          allOf: [
+            { required: ["id"] },
+            {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+              },
+            },
+          ],
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
+        ["id", true],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts JSON Schema child combinator object fields", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -987,6 +1015,29 @@ describe("schemator", () => {
 
       expect(graph.models[0]?.fields.map((field) => field.path)).toEqual([
         "id",
+        "properties",
+        "properties.promptRecipe",
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("does not treat single-key ordinary JSON properties bags as JSON Schema", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "document.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          properties: {
+            promptRecipe: "standard-v1",
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual([
         "properties",
         "properties.promptRecipe",
       ]);

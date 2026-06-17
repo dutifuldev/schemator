@@ -124,7 +124,6 @@ function isJsonSchema(value: unknown): value is Record<string, unknown> {
   const hasRootSchemaKeyword =
     typeof value["$ref"] === "string" ||
     isSchemaType(value["type"]) ||
-    isRecord(value["properties"]) ||
     isRecord(value["$defs"]) ||
     isRecord(value["definitions"]) ||
     Array.isArray(value["allOf"]) ||

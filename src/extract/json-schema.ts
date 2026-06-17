@@ -44,6 +44,7 @@ function visitSchemaObject(
   root: unknown,
   refStack: Set<string>,
   ancestorRequired: boolean,
+  inheritedRequired: ReadonlySet<string> = new Set(),
 ): void {
   const schema = asSchema(value);
   if (typeof schema?.$ref === "string") {
@@ -58,6 +59,7 @@ function visitSchemaObject(
         root,
         withRef(refStack, refSchema.ref),
         ancestorRequired,
+        inheritedRequired,
       );
     }
     return;
@@ -82,7 +84,17 @@ function visitSchemaObject(
             source,
           });
         }
-        visitSchemaCombinators(schema, modelId, parentPath, fields, source, root, refStack, ancestorRequired);
+        visitSchemaCombinators(
+          schema,
+          modelId,
+          parentPath,
+          fields,
+          source,
+          root,
+          refStack,
+          ancestorRequired,
+          inheritedRequired,
+        );
         return;
       }
       if (parentPath !== "") {
@@ -96,7 +108,17 @@ function visitSchemaObject(
           withRef(refStack, rootItemSchema.ref),
           ancestorRequired,
         );
-        visitSchemaCombinators(schema, modelId, parentPath, fields, source, root, refStack, ancestorRequired);
+        visitSchemaCombinators(
+          schema,
+          modelId,
+          parentPath,
+          fields,
+          source,
+          root,
+          refStack,
+          ancestorRequired,
+          inheritedRequired,
+        );
         return;
       }
       const rootArrayNullable = schemaAllowsNull(schema);
@@ -121,15 +143,21 @@ function visitSchemaObject(
         !rootArrayNullable,
       );
     }
-    visitSchemaCombinators(schema, modelId, parentPath, fields, source, root, refStack, ancestorRequired);
+    visitSchemaCombinators(
+      schema,
+      modelId,
+      parentPath,
+      fields,
+      source,
+      root,
+      refStack,
+      ancestorRequired,
+      inheritedRequired,
+    );
     return;
   }
 
-  const required = new Set(
-    Array.isArray(schema.required)
-      ? schema.required.filter((item): item is string => typeof item === "string")
-      : [],
-  );
+  const required = requiredSetForSchema(schema, inheritedRequired);
 
   for (const [name, child] of Object.entries(schema.properties)) {
     const childSchema = asSchema(child);
@@ -182,7 +210,17 @@ function visitSchemaObject(
       }
     }
   }
-  visitSchemaCombinators(schema, modelId, parentPath, fields, source, root, refStack, ancestorRequired);
+  visitSchemaCombinators(
+    schema,
+    modelId,
+    parentPath,
+    fields,
+    source,
+    root,
+    refStack,
+    ancestorRequired,
+    inheritedRequired,
+  );
 }
 
 function visitSchemaCombinators(
@@ -194,12 +232,37 @@ function visitSchemaCombinators(
   root: unknown,
   refStack: Set<string>,
   ancestorRequired: boolean,
+  inheritedRequired: ReadonlySet<string>,
 ): void {
+  const allOfRequired = requiredSetForSchema(schema, inheritedRequired);
   for (const value of schemaArray(schema.allOf)) {
-    visitSchemaObject(value, modelId, parentPath, fields, source, root, refStack, ancestorRequired);
+    visitSchemaObject(value, modelId, parentPath, fields, source, root, refStack, ancestorRequired, allOfRequired);
   }
   for (const value of [...schemaArray(schema.anyOf), ...schemaArray(schema.oneOf)]) {
     visitSchemaObject(value, modelId, parentPath, fields, source, root, refStack, false);
+  }
+}
+
+function requiredSetForSchema(schema: JsonSchemaLike, inheritedRequired: ReadonlySet<string>): Set<string> {
+  const required = new Set(inheritedRequired);
+  addRequiredNames(required, schema.required);
+  for (const branch of schemaArray(schema.allOf)) {
+    const branchSchema = asSchema(branch);
+    if (branchSchema) {
+      addRequiredNames(required, branchSchema.required);
+    }
+  }
+  return required;
+}
+
+function addRequiredNames(required: Set<string>, value: unknown): void {
+  if (!Array.isArray(value)) {
+    return;
+  }
+  for (const item of value) {
+    if (typeof item === "string") {
+      required.add(item);
+    }
   }
 }
 
