@@ -23,6 +23,11 @@ export function applyAggregateToGraph(graph: ModelGraph, aggregate: AggregateRev
           .filter((decision) => decision.confidence !== "low" && decision.decision === "rename")
           .map((decision) => [decision.fieldPath, finalPathForRename(decision)]),
       );
+      const renameNames = new Map(
+        decisions
+          .filter((decision) => decision.confidence !== "low" && decision.decision === "rename")
+          .map((decision) => [decision.fieldPath, decision.finalName]),
+      );
       const removed = new Set(
         decisions
           .filter((decision) =>
@@ -33,7 +38,7 @@ export function applyAggregateToGraph(graph: ModelGraph, aggregate: AggregateRev
       );
       const fields = model.fields
         .filter((field) => !isRemoved(field.path, removed))
-        .map((field) => applyRenames(field, renameMap));
+        .map((field) => applyRenames(field, renameMap, renameNames));
       assertUniqueFieldPaths(model.id, fields);
       return {
         ...model,
@@ -71,13 +76,13 @@ function parentPath(path: string): string {
   return lastDot === -1 ? "" : path.slice(0, lastDot);
 }
 
-function applyRenames(field: FieldNode, renameMap: Map<string, string>): FieldNode {
+function applyRenames(field: FieldNode, renameMap: Map<string, string>, renameNames: Map<string, string>): FieldNode {
   const nextPath = applyRenameMapToPath(field.path, renameMap);
   const exactRename = renameMap.get(field.path);
   return {
     ...field,
     path: nextPath,
-    name: exactRename ? lastPathSegment(exactRename) : field.name,
+    name: exactRename ? renameNames.get(field.path) ?? lastPathSegment(exactRename) : field.name,
   };
 }
 

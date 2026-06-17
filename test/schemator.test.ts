@@ -2295,9 +2295,10 @@ describe("schemator", () => {
         cwd: process.cwd(),
       });
 
-      await expect(readFile(join(runDir, "final-report.md"), "utf8")).resolves.toContain(
-        "Schemator Data Model Review",
-      );
+      const report = await readFile(join(runDir, "final-report.md"), "utf8");
+      expect(report).toContain("Schemator Data Model Review");
+      expect(report).toContain("| `systemPromptVariant` | `string` | no | no |");
+      expect(report).not.toContain("| `promptRecipe` | `string` | no | no |");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -2755,6 +2756,49 @@ describe("schemator", () => {
     expect(applyAggregateToGraph(graph, aggregate).models[0]?.fields.map((item) => [item.path, item.name])).toEqual([
       ["a~1b", "a.b"],
       ["systemPromptVariant", "systemPromptVariant"],
+    ]);
+  });
+
+  test("preserves unescaped field names when exact renames use escaped final paths", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [
+            field("a~1b", "a.b", "number", false),
+          ],
+        },
+      ],
+    };
+    const aggregate: AggregateReview = {
+      schemaVersion: 1,
+      ok: true,
+      summary: {
+        totalFields: 1,
+        keep: 0,
+        rename: 1,
+        merge: 0,
+        derive: 0,
+        move: 0,
+        defer: 0,
+        remove: 0,
+        opaque: 0,
+      },
+      findings: [],
+      decisions: [
+        {
+          ...review("a~1b", "c~1d"),
+          finalName: "c.d",
+        },
+      ],
+    };
+
+    expect(applyAggregateToGraph(graph, aggregate).models[0]?.fields.map((item) => [item.path, item.name])).toEqual([
+      ["c~1d", "c.d"],
     ]);
   });
 

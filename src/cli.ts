@@ -141,7 +141,9 @@ program
       const hasFinalGraph = paths.finalGraph ? await pathExists(paths.finalGraph) : false;
       const finalGraph = paths.finalGraph && hasFinalGraph
         ? assertModelGraph(await readJson(paths.finalGraph))
-        : undefined;
+        : aggregate.ok
+          ? applyAggregateToGraph(graph, aggregate)
+          : undefined;
       await writeText(resolvePath(options.out), renderReport(graph, aggregate, finalGraph));
     });
   });
