@@ -53,12 +53,22 @@ function isRemoved(path: string, removed: Set<string>): boolean {
 }
 
 function finalPathForRename(decision: FieldReview): string {
-  if (decision.finalPath) {
-    return decision.finalPath;
+  const finalPath = decision.finalPath ?? finalPathFromName(decision.fieldPath, decision.finalName);
+  if (parentPath(finalPath) !== parentPath(decision.fieldPath)) {
+    throw new Error(`rename cannot move field ${decision.model}.${decision.fieldPath} to ${finalPath}`);
   }
-  const lastDot = decision.fieldPath.lastIndexOf(".");
-  const prefix = lastDot === -1 ? "" : decision.fieldPath.slice(0, lastDot + 1);
-  return `${prefix}${decision.finalName}`;
+  return finalPath;
+}
+
+function finalPathFromName(fieldPath: string, finalName: string): string {
+  const lastDot = fieldPath.lastIndexOf(".");
+  const prefix = lastDot === -1 ? "" : fieldPath.slice(0, lastDot + 1);
+  return `${prefix}${finalName}`;
+}
+
+function parentPath(path: string): string {
+  const lastDot = path.lastIndexOf(".");
+  return lastDot === -1 ? "" : path.slice(0, lastDot);
 }
 
 function applyRenames(field: FieldNode, renameMap: Map<string, string>): FieldNode {

@@ -66,7 +66,7 @@ function declarationToModel(
 ): ModelNode {
   const id = declaration.name.text;
   const fields: FieldNode[] = [];
-  const memberGroups = memberGroupsForDeclaration(declaration);
+  const memberGroups = memberGroupsForDeclaration(declaration, objectDeclarations);
   if (memberGroups.length > 0) {
     if (ts.isInterfaceDeclaration(declaration)) {
       addInheritedInterfaceFields(
@@ -127,7 +127,7 @@ function addInheritedInterfaceFields(
       );
     }
     addMemberGroupsFields(
-      memberGroupsForDeclaration(base),
+      memberGroupsForDeclaration(base, objectDeclarations, seenInterfaces),
       "",
       modelId,
       sourceFile,
@@ -147,21 +147,22 @@ function extendedInterfaceNames(declaration: ts.InterfaceDeclaration, sourceFile
     .flatMap((clause) => clause.types.map((heritageType) => heritageType.expression.getText(sourceFile)));
 }
 
-function memberGroupsForDeclaration(declaration: Declaration): ts.NodeArray<ts.TypeElement>[] {
+function memberGroupsForDeclaration(
+  declaration: Declaration,
+  objectDeclarations?: Map<string, Declaration>,
+  seenTypes: Set<string> = new Set(),
+): ReadonlyArray<ReadonlyArray<ts.TypeElement>> {
   if (ts.isInterfaceDeclaration(declaration)) {
     return [declaration.members];
   }
-  if (ts.isTypeLiteralNode(declaration.type)) {
-    return [declaration.type.members];
-  }
-  if (ts.isUnionTypeNode(unwrapParenthesizedType(declaration.type))) {
-    return typeLiterals(nonNullableTypeNodes(declaration.type)).map((typeLiteral) => typeLiteral.members);
-  }
-  return [];
+  return memberGroupsForTypeNode(declaration.type, objectDeclarations, seenTypes);
 }
 
 function declarationHasMembers(declaration: Declaration): boolean {
-  return memberGroupsForDeclaration(declaration).length > 0;
+  if (ts.isInterfaceDeclaration(declaration)) {
+    return true;
+  }
+  return typeNodeHasObjectMembers(declaration.type);
 }
 
 function declarationIsArrayAlias(declaration: Declaration): boolean {
@@ -339,7 +340,7 @@ function addPropertyFieldIfAbsent(
 }
 
 function addMemberGroupsFields(
-  memberGroups: ts.NodeArray<ts.TypeElement>[],
+  memberGroups: ReadonlyArray<ReadonlyArray<ts.TypeElement>>,
   parentPath: string,
   modelId: string,
   sourceFile: ts.SourceFile,
@@ -481,6 +482,65 @@ function propertyInlineArrayObjectTypes(member: ts.PropertySignature): ts.TypeLi
 
 function typeLiterals(typeNodes: ts.TypeNode[]): ts.TypeLiteralNode[] {
   return typeNodes.filter((candidate): candidate is ts.TypeLiteralNode => ts.isTypeLiteralNode(candidate));
+}
+
+function memberGroupsForTypeNode(
+  typeNode: ts.TypeNode,
+  objectDeclarations: Map<string, Declaration> | undefined,
+  seenTypes: Set<string>,
+): ReadonlyArray<ReadonlyArray<ts.TypeElement>> {
+  const unwrapped = unwrapParenthesizedType(typeNode);
+  if (ts.isTypeLiteralNode(unwrapped)) {
+    return [unwrapped.members];
+  }
+  if (ts.isUnionTypeNode(unwrapped)) {
+    return nonNullableTypeNodes(unwrapped).flatMap((candidate) =>
+      memberGroupsForTypeNode(candidate, objectDeclarations, seenTypes)
+    );
+  }
+  if (ts.isIntersectionTypeNode(unwrapped)) {
+    const members = unwrapped.types.flatMap((candidate) =>
+      memberGroupsForTypeNode(candidate, objectDeclarations, seenTypes).flatMap((group) => [...group])
+    );
+    return members.length > 0 ? [members] : [];
+  }
+  if (ts.isTypeReferenceNode(unwrapped)) {
+    const refName = typeReferenceName(unwrapped);
+    const referenced = refName ? objectDeclarations?.get(refName) : undefined;
+    if (!refName || !referenced || seenTypes.has(refName)) {
+      return [];
+    }
+    return memberGroupsForDeclaration(referenced, objectDeclarations, new Set([...seenTypes, refName]));
+  }
+  return [];
+}
+
+function typeNodeHasObjectMembers(typeNode: ts.TypeNode): boolean {
+  const unwrapped = unwrapParenthesizedType(typeNode);
+  if (ts.isTypeLiteralNode(unwrapped)) {
+    return true;
+  }
+  if (ts.isUnionTypeNode(unwrapped)) {
+    return nonNullableTypeNodes(unwrapped).some(typeNodeHasObjectMembers);
+  }
+  if (ts.isIntersectionTypeNode(unwrapped)) {
+    return unwrapped.types.some((candidate) => {
+      const unwrappedCandidate = unwrapParenthesizedType(candidate);
+      return ts.isTypeReferenceNode(unwrappedCandidate) || typeNodeHasObjectMembers(unwrappedCandidate);
+    });
+  }
+  return false;
+}
+
+function typeReferenceName(typeNode: ts.TypeReferenceNode): string | null {
+  const typeName = typeNode.typeName;
+  if (ts.isIdentifier(typeName)) {
+    return typeName.text;
+  }
+  if (ts.isQualifiedName(typeName)) {
+    return typeName.right.text;
+  }
+  return null;
 }
 
 function propertyNameText(name: ts.PropertyName): string | null {

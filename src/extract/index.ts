@@ -151,19 +151,40 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function dedupeModels(models: ModelNode[]): ModelNode[] {
   const seen = new Map<string, number>();
-  return models.map((model) => {
-    const count = seen.get(model.id) ?? 0;
-    seen.set(model.id, count + 1);
-    if (count === 0) {
-      return model;
-    }
+  const plans = models.map((model) => {
+    const occurrence = (seen.get(model.id) ?? 0) + 1;
+    seen.set(model.id, occurrence);
     return {
-      ...model,
-      id: `${model.id}#${count + 1}`,
-      fields: model.fields.map((field) => ({
-        ...field,
-        parent: `${model.id}#${count + 1}`,
-      })),
+      model,
+      baseId: model.id,
+      occurrence,
+      dedupedId: occurrence === 1 ? model.id : `${model.id}#${occurrence}`,
     };
   });
+  const idsByBase = new Map<string, string[]>();
+  for (const plan of plans) {
+    const ids = idsByBase.get(plan.baseId) ?? [];
+    ids.push(plan.dedupedId);
+    idsByBase.set(plan.baseId, ids);
+  }
+  return plans.map((plan) => ({
+    ...plan.model,
+    id: plan.dedupedId,
+    fields: plan.model.fields.map((field) => {
+      const ref = field.ref ? dedupedRef(field.ref, plan.occurrence, idsByBase) : undefined;
+      return {
+        ...field,
+        parent: plan.dedupedId,
+        ...(ref ? { ref } : {}),
+      };
+    }),
+  }));
+}
+
+function dedupedRef(ref: string, occurrence: number, idsByBase: Map<string, string[]>): string {
+  const ids = idsByBase.get(ref);
+  if (!ids) {
+    return ref;
+  }
+  return ids[Math.min(occurrence - 1, ids.length - 1)] ?? ref;
 }

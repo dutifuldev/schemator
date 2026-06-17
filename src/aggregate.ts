@@ -109,6 +109,14 @@ export function aggregateReviews(graph: ModelGraph, reviews: FieldReview[]): Agg
         message: "Low-confidence simplification decisions require focused follow-up before reduction.",
       });
     }
+    if (review.decision === "rename" && parentPath(finalPathForRename(review)) !== parentPath(review.fieldPath)) {
+      findings.push({
+        severity: "error",
+        model: review.model,
+        fieldPath: review.fieldPath,
+        message: "Rename decision cannot move fields in the v1 graph reducer.",
+      });
+    }
     if (!fieldKeys.has(key)) {
       findings.push({
         severity: "error",
@@ -116,6 +124,27 @@ export function aggregateReviews(graph: ModelGraph, reviews: FieldReview[]): Agg
         fieldPath: review.fieldPath,
         message: "Review references a field that was not extracted.",
       });
+    }
+  }
+  for (const review of reviews) {
+    if (review.confidence === "low" || !isRemovalLikeDecision(review.decision)) {
+      continue;
+    }
+    for (const descendant of reviews) {
+      if (
+        descendant.model === review.model &&
+        descendant.fieldPath !== review.fieldPath &&
+        isDescendantPath(descendant.fieldPath, review.fieldPath) &&
+        !isRemovalLikeDecision(descendant.decision)
+      ) {
+        findings.push({
+          severity: "error",
+          model: review.model,
+          fieldPath: review.fieldPath,
+          message: "Parent removal conflicts with descendant review decision.",
+        });
+        break;
+      }
     }
   }
 
@@ -179,6 +208,27 @@ function summarize(reviews: FieldReview[]): Record<Decision | "totalFields", num
 
 function isSimplifyingDecision(decision: Decision): boolean {
   return decision !== "keep" && decision !== "opaque";
+}
+
+function isRemovalLikeDecision(decision: Decision): boolean {
+  return decision === "remove" || decision === "derive" || decision === "defer";
+}
+
+function isDescendantPath(path: string, parent: string): boolean {
+  return path.startsWith(`${parent}.`) || path.startsWith(`${parent}[].`);
+}
+
+function finalPathForRename(review: FieldReview): string {
+  if (review.finalPath) {
+    return review.finalPath;
+  }
+  const parent = parentPath(review.fieldPath);
+  return parent ? `${parent}.${review.finalName}` : review.finalName;
+}
+
+function parentPath(path: string): string {
+  const lastDot = path.lastIndexOf(".");
+  return lastDot === -1 ? "" : path.slice(0, lastDot);
 }
 
 function reviewKey(model: string, fieldPath: string): string {

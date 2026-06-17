@@ -910,6 +910,44 @@ describe("schemator", () => {
     }
   });
 
+  test("rewrites duplicate Markdown TypeScript model refs within the same occurrence", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "proposal.md");
+      await writeFile(
+        source,
+        [
+          "```ts",
+          "type Child = {",
+          "  a: string;",
+          "};",
+          "type Parent = {",
+          "  child: Child;",
+          "};",
+          "```",
+          "",
+          "```ts",
+          "type Child = {",
+          "  b: string;",
+          "};",
+          "type Parent = {",
+          "  child: Child;",
+          "};",
+          "```",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+      const secondParent = graph.models.find((model) => model.id === "Parent#2");
+      const secondChild = secondParent?.fields.find((field) => field.path === "child");
+
+      expect(graph.models.map((model) => model.id)).toEqual(["Child", "Parent", "Child#2", "Parent#2"]);
+      expect(secondChild?.parent).toBe("Parent#2");
+      expect(secondChild?.ref).toBe("Child#2");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts inherited TypeScript interface fields", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -1021,6 +1059,39 @@ describe("schemator", () => {
       const graph = await extractGraph(source);
       const user = graph.models.find((model) => model.id === "User");
 
+      expect(user?.fields.map((field) => field.path)).toEqual([
+        "id",
+        "settings",
+        "settings.promptRecipe",
+        "name",
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("extracts TypeScript intersection alias fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Base = {",
+          "  id: string;",
+          "  settings?: {",
+          "    promptRecipe?: string;",
+          "  };",
+          "};",
+          "type User = Base & {",
+          "  name: string;",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+      const user = graph.models.find((model) => model.id === "User");
+
+      expect(user?.kind).toBe("object");
       expect(user?.fields.map((field) => field.path)).toEqual([
         "id",
         "settings",
@@ -1576,6 +1647,82 @@ describe("schemator", () => {
         "Decision merge is not supported by the v1 graph reducer.",
         "Decision move is not supported by the v1 graph reducer.",
       ]),
+    );
+  });
+
+  test("rejects rename decisions that move fields across parents", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [field("config.recipe", "recipe", "string", false)],
+        },
+      ],
+    };
+
+    const aggregate = aggregateReviews(graph, [review("config.recipe", "other.variant")]);
+
+    expect(aggregate.ok).toBe(false);
+    expect(aggregate.findings.map((finding) => finding.message)).toContain(
+      "Rename decision cannot move fields in the v1 graph reducer.",
+    );
+    expect(() =>
+      applyAggregateToGraph(graph, {
+        schemaVersion: 1,
+        ok: true,
+        summary: {
+          totalFields: 1,
+          keep: 0,
+          rename: 1,
+          merge: 0,
+          derive: 0,
+          move: 0,
+          defer: 0,
+          remove: 0,
+          opaque: 0,
+        },
+        findings: [],
+        decisions: [review("config.recipe", "other.variant")],
+      }),
+    ).toThrow("rename cannot move field");
+  });
+
+  test("rejects parent removal when a descendant review keeps the child", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [
+            field("config", "config", "object", true),
+            field("config.id", "id", "string", false),
+          ],
+        },
+      ],
+    };
+
+    const aggregate = aggregateReviews(graph, [
+      {
+        ...reviewWithoutFinalPath("config", "config"),
+        decision: "remove",
+        simplestChoice: "remove",
+      },
+      {
+        ...reviewWithoutFinalPath("config.id", "id"),
+        decision: "keep",
+      },
+    ]);
+
+    expect(aggregate.ok).toBe(false);
+    expect(aggregate.findings.map((finding) => finding.message)).toContain(
+      "Parent removal conflicts with descendant review decision.",
     );
   });
 
