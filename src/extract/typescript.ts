@@ -97,7 +97,8 @@ function declarationToModel(
         new Set([id]),
       );
     }
-    const rootRequired = !(ts.isTypeAliasDeclaration(declaration) && typeAllowsNullish(declaration.type));
+    const rootRequired = !ts.isTypeAliasDeclaration(declaration) ||
+      topLevelObjectAlwaysPresent(declaration, objectDeclarations);
     addMemberGroupsFields(memberGroups, "", id, sourceFile, sourcePath, startLine, modelNames, fields, rootRequired, true);
   } else if (ts.isTypeAliasDeclaration(declaration)) {
     addArrayAliasFields(declaration, sourceFile, sourcePath, startLine, modelNames, fields);
@@ -574,6 +575,20 @@ function hasOnlyInlineArrayObjectBranches(typeNodes: ts.TypeNode[]): boolean {
       const element = arrayElementTypeNode(candidate);
       return Boolean(element && typeBranches(element).every((branch) => ts.isTypeLiteralNode(branch)));
     });
+}
+
+function topLevelObjectAlwaysPresent(
+  declaration: ts.TypeAliasDeclaration,
+  objectDeclarations: Map<string, Declaration>,
+): boolean {
+  if (typeAllowsNullish(declaration.type)) {
+    return false;
+  }
+  const branches = nonNullableTypeNodes(declaration.type);
+  return branches.length > 0 &&
+    branches.every((branch) =>
+      memberGroupsForTypeNode(branch, objectDeclarations, new Set([declaration.name.text])).length > 0
+    );
 }
 
 function uniqueStrings(values: string[]): string[] {

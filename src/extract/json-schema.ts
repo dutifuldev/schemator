@@ -28,7 +28,7 @@ export function extractJsonSchemaModel(
   const rootRefSchema = typeof rootSchema?.$ref === "string"
     ? resolveRefSchema(value, rootSchema.$ref, new Set())
     : null;
-  const rootRequired = !(rootSchema && schemaOrRefAllowsNull(rootSchema, rootRefSchema));
+  const rootRequired = Boolean(rootSchema && schemaOrRefAlwaysObject(rootSchema, rootRefSchema, value, new Set()));
   visitSchemaObject(value, modelId, "", fields, source, value, new Set(), rootRequired);
   return {
     id: modelId,
@@ -171,7 +171,9 @@ function visitSchemaObject(
     const type = schemaType(childSchema ?? child);
     const fieldRequired = ancestorRequired && required.has(name);
     const fieldNullable = Boolean(childSchema && schemaOrRefAllowsNull(childSchema, refSchema));
-    const descendantRequired = fieldRequired && !fieldNullable;
+    const descendantRequired = Boolean(
+      fieldRequired && childSchema && schemaOrRefAlwaysObject(childSchema, refSchema, root, refStack),
+    );
     const itemSchema = childSchema ? itemObjectSchema(childSchema, root, refStack) : null;
     const objectLike = Boolean(childSchema && hasNestedSchema(childSchema, root, refStack));
     addField(fields, {
@@ -372,6 +374,49 @@ function hasSchemaType(schema: JsonSchemaLike, type: string): boolean {
     return true;
   }
   return Array.isArray(schema.type) && schema.type.includes(type);
+}
+
+function schemaOrRefAlwaysObject(
+  schema: JsonSchemaLike,
+  refSchema: ResolvedSchema | null,
+  root: unknown,
+  refStack: Set<string>,
+): boolean {
+  if (refSchema) {
+    return schemaAlwaysObject(refSchema.value, root, withRef(refStack, refSchema.ref));
+  }
+  return schemaAlwaysObject(schema, root, refStack);
+}
+
+function schemaAlwaysObject(value: unknown, root: unknown, refStack: Set<string>): boolean {
+  const schema = asSchema(value);
+  if (!schema) {
+    return false;
+  }
+  if (typeof schema.$ref === "string") {
+    if (refStack.has(schema.$ref)) {
+      return true;
+    }
+    const refSchema = resolveRefSchema(root, schema.$ref, refStack);
+    return Boolean(refSchema && schemaAlwaysObject(refSchema.value, root, withRef(refStack, refSchema.ref)));
+  }
+  const types = schemaTypes(schema.type);
+  if (types.length > 0) {
+    return types.length === 1 && types[0] === "object";
+  }
+  const allOf = schemaArray(schema.allOf);
+  if (allOf.some((candidate) => schemaAlwaysObject(candidate, root, refStack))) {
+    return true;
+  }
+  const alternatives = [...schemaArray(schema.anyOf), ...schemaArray(schema.oneOf)];
+  return alternatives.length > 0 && alternatives.every((candidate) => schemaAlwaysObject(candidate, root, refStack));
+}
+
+function schemaTypes(value: unknown): string[] {
+  if (typeof value === "string") {
+    return [value];
+  }
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
 function schemaAllowsNull(schema: JsonSchemaLike): boolean {

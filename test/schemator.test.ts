@@ -432,6 +432,37 @@ describe("schemator", () => {
     }
   });
 
+  test("marks JSON Schema descendants optional when object schemas can be scalar", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          required: ["payload"],
+          properties: {
+            payload: {
+              type: ["object", "string"],
+              required: ["id"],
+              properties: {
+                id: { type: "string" },
+              },
+            },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
+        ["payload", true],
+        ["payload.id", false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("propagates nullable JSON Schema roots to required fields", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -1794,6 +1825,19 @@ describe("schemator", () => {
         ["id", false],
         ["reason", false],
       ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("marks top-level TypeScript object union fields optional when aliases can be scalar", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(source, "type Event = { id: string } | string;\n");
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([["id", false]]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
