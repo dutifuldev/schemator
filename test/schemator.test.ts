@@ -805,6 +805,40 @@ describe("schemator", () => {
     }
   });
 
+  test("propagates nullable JSON Schema ref targets to nested required fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          required: ["child"],
+          properties: {
+            child: { $ref: "#/$defs/MaybeChild" },
+          },
+          $defs: {
+            MaybeChild: {
+              type: ["object", "null"],
+              required: ["id"],
+              properties: {
+                id: { type: "string" },
+              },
+            },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required, field.nullable])).toEqual([
+        ["child", true, true],
+        ["child.id", false, false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts JSON Schema array item ref fields", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -2137,6 +2171,33 @@ describe("schemator", () => {
       const report = await readFile(reportPath, "utf8");
       expect(report).toContain("| `T` | `variant` | keep | `variant` |");
       expect(report).not.toContain("| `T` | `recipe` | rename | `variant` |");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("reports the current run summary when output directories are reused", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      const runDir = join(dir, "run");
+      const reportPath = join(runDir, "report.md");
+      await writeFile(source, "type T = { recipe: string };\n");
+
+      await execFileAsync(tsxBin(), ["src/cli.ts", "run", "--source", source, "--out", runDir], {
+        cwd: process.cwd(),
+      });
+      await writeFile(source, "type T = { id: string };\n");
+      await execFileAsync(tsxBin(), ["src/cli.ts", "run", "--source", source, "--out", runDir], {
+        cwd: process.cwd(),
+      });
+      await execFileAsync(tsxBin(), ["src/cli.ts", "report", "--run", runDir, "--out", reportPath], {
+        cwd: process.cwd(),
+      });
+
+      const report = await readFile(reportPath, "utf8");
+      expect(report).toContain("| `T` | `id` | keep | `id` |");
+      expect(report).not.toContain("variant");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

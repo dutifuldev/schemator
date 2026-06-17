@@ -294,7 +294,7 @@ async function reportPaths(options: { run?: string; graph?: string; aggregate?: 
 }> {
   if (options.run) {
     const runDir = resolvePath(options.run);
-    const iteration = await latestRunIteration(runDir);
+    const iteration = await currentRunIteration(runDir);
     return {
       graph: join(runDir, `graph.iteration-${iteration}.json`),
       aggregate: join(runDir, `aggregate.iteration-${iteration}.json`),
@@ -310,6 +310,18 @@ async function reportPaths(options: { run?: string; graph?: string; aggregate?: 
   };
 }
 
+async function currentRunIteration(runDir: string): Promise<number> {
+  const summaryPath = join(runDir, "run-summary.json");
+  if (await pathExists(summaryPath)) {
+    const summary = await readJson(summaryPath);
+    const stableIteration = isRecord(summary) ? summary["stableIteration"] : null;
+    if (typeof stableIteration === "number" && Number.isInteger(stableIteration) && stableIteration > 0) {
+      return stableIteration;
+    }
+  }
+  return latestRunIteration(runDir);
+}
+
 async function latestRunIteration(runDir: string): Promise<number> {
   const entries = await readdir(runDir);
   const iterations = entries
@@ -323,6 +335,10 @@ async function latestRunIteration(runDir: string): Promise<number> {
     throw new Error(`run directory has no aggregate.iteration-*.json files: ${runDir}`);
   }
   return latest;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function assertModelGraph(value: unknown): ModelGraph {

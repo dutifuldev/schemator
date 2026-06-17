@@ -167,7 +167,7 @@ function visitSchemaObject(
     const path = joinFieldPath(parentPath, name);
     const type = schemaType(childSchema ?? child);
     const fieldRequired = ancestorRequired && required.has(name);
-    const fieldNullable = Boolean(childSchema && schemaAllowsNull(childSchema));
+    const fieldNullable = Boolean(childSchema && schemaOrRefAllowsNull(childSchema, refSchema));
     const descendantRequired = fieldRequired && !fieldNullable;
     const itemSchema = childSchema ? itemObjectSchema(childSchema, root, refStack) : null;
     const objectLike = Boolean(childSchema && hasNestedSchema(childSchema, root, refStack));
@@ -373,6 +373,11 @@ function schemaAllowsNull(schema: JsonSchemaLike): boolean {
       const candidateSchema = asSchema(candidate);
       return Boolean(candidateSchema && schemaAllowsNull(candidateSchema));
     });
+}
+
+function schemaOrRefAllowsNull(schema: JsonSchemaLike, refSchema: ResolvedSchema | null): boolean {
+  const resolvedSchema = refSchema ? asSchema(refSchema.value) : null;
+  return schemaAllowsNull(schema) || Boolean(resolvedSchema && schemaAllowsNull(resolvedSchema));
 }
 
 function resolveRefSchema(root: unknown, ref: string, refStack: Set<string>): ResolvedSchema | null {
