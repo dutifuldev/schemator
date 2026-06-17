@@ -1783,6 +1783,19 @@ describe("schemator", () => {
     }
   });
 
+  test("propagates nullable top-level TypeScript object aliases", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(source, "type Profile = { id: string } | null;\n");
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([["id", false]]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts every TypeScript nested object union variant", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -2206,6 +2219,7 @@ describe("schemator", () => {
 
   test("uses collision-free artifact filename parts", () => {
     expect(pathToFileNamePart("a/b")).not.toBe(pathToFileNamePart("a_b"));
+    expect(pathToFileNamePart("a".repeat(300)).length).toBeLessThan(80);
   });
 
   test("rejects duplicate field reviews", () => {

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
@@ -37,5 +38,7 @@ export function resolvePath(path: string): string {
 }
 
 export function pathToFileNamePart(value: string): string {
-  return `b64_${Buffer.from(value, "utf8").toString("base64url")}`;
+  const slug = value.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 48) || "field";
+  const hash = createHash("sha256").update(value).digest("hex").slice(0, 16);
+  return `${slug}_${hash}`;
 }

@@ -97,7 +97,8 @@ function declarationToModel(
         new Set([id]),
       );
     }
-    addMemberGroupsFields(memberGroups, "", id, sourceFile, sourcePath, startLine, modelNames, fields, true, true);
+    const rootRequired = !(ts.isTypeAliasDeclaration(declaration) && typeAllowsNullish(declaration.type));
+    addMemberGroupsFields(memberGroups, "", id, sourceFile, sourcePath, startLine, modelNames, fields, rootRequired, true);
   } else if (ts.isTypeAliasDeclaration(declaration)) {
     addArrayAliasFields(declaration, sourceFile, sourcePath, startLine, modelNames, fields);
   }
