@@ -1719,6 +1719,30 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts object branches from unioned top-level TypeScript array aliases", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Rows = string[] | {",
+          "  id: string;",
+          "}[];",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.kind).toBe("array");
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.objectLike, field.required])).toEqual([
+        ["items", true, true],
+        ["items[].id", false, false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts nullable top-level TypeScript array aliases", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -1907,6 +1931,25 @@ describe("schemator", () => {
         }),
       ).rejects.toMatchObject({ code: 2 });
       await expect(readFile(join(runDir, "run-summary.json"), "utf8")).resolves.toContain('"stable": false');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("run final report uses the converged aggregate", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      const runDir = join(dir, "run");
+      await writeFile(source, ["type ModelProfilePolicy = {", "  promptRecipe?: string;", "};"].join("\n"));
+
+      await execFileAsync(tsxBin(), ["src/cli.ts", "run", "--source", source, "--out", runDir], {
+        cwd: process.cwd(),
+      });
+      const report = await readFile(join(runDir, "final-report.md"), "utf8");
+
+      expect(report).toContain("| `ModelProfilePolicy` | `systemPromptVariant` | keep |");
+      expect(report).not.toContain("| `ModelProfilePolicy` | `promptRecipe` | rename |");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

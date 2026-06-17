@@ -165,7 +165,6 @@ program
       const initialGraph = await extractGraph(source);
       let graph: ModelGraph = initialGraph;
       let lastAggregate: AggregateReview | null = null;
-      let firstAggregate: AggregateReview | null = null;
       let invalidAggregate: AggregateReview | null = null;
       let stableIteration = 0;
 
@@ -184,9 +183,6 @@ program
           unsupportedStrategy(options.strategy);
         }
         const aggregate = await aggregateFromFiles(graphPath, reviewsDir);
-        if (!firstAggregate) {
-          firstAggregate = aggregate;
-        }
         await writeJson(aggregatePath, aggregate);
         await writeText(join(out, `patch.iteration-${iteration}.md`), renderPatchPlan(graph, aggregate));
         lastAggregate = aggregate;
@@ -203,8 +199,8 @@ program
       }
 
       await writeJson(join(out, "graph.final.json"), graph);
-      if (firstAggregate) {
-        await writeText(join(out, "final-report.md"), renderReport(initialGraph, firstAggregate, graph));
+      if (lastAggregate) {
+        await writeText(join(out, "final-report.md"), renderReport(initialGraph, lastAggregate, graph));
       }
       await writeText(
         join(out, "run-summary.json"),

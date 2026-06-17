@@ -225,11 +225,11 @@ function addArrayAliasFields(
   modelNames: Set<string>,
   fields: FieldNode[],
 ): void {
-  const elementType = arrayElementTypeNode(declaration.type);
-  if (!elementType) {
+  const elementTypes = arrayElementTypeNodes(declaration.type);
+  if (elementTypes.length === 0) {
     return;
   }
-  const elementCandidates = nonNullableTypeNodes(elementType);
+  const elementCandidates = elementTypes.flatMap(nonNullableTypeNodes);
   const ref = referencedModelFromTypeCandidates(elementCandidates, sourceFile, modelNames);
   const inlineObjectTypes = typeLiterals(elementCandidates);
   const objectLike = Boolean(ref) || inlineObjectTypes.length > 0;
@@ -246,7 +246,7 @@ function addArrayAliasFields(
     ...(ref ? { ref } : {}),
   });
   if (inlineObjectTypes.length > 0) {
-    const descendantRequired = !fieldNullable && hasOnlyInlineObjectBranches([elementType]);
+    const descendantRequired = !fieldNullable && hasOnlyInlineObjectBranches(elementTypes);
     addTypeLiteralVariantFields(
       inlineObjectTypes,
       "items[]",
@@ -677,30 +677,28 @@ function isNullishTypeNode(typeNode: ts.TypeNode): boolean {
 }
 
 function arrayElementTypeNode(typeNode: ts.TypeNode): ts.TypeNode | null {
+  return arrayElementTypeNodes(typeNode)[0] ?? null;
+}
+
+function arrayElementTypeNodes(typeNode: ts.TypeNode): ts.TypeNode[] {
   const unwrapped = unwrapParenthesizedType(typeNode);
   if (ts.isUnionTypeNode(unwrapped)) {
-    for (const candidate of nonNullableTypeNodes(unwrapped)) {
-      const element = arrayElementTypeNode(candidate);
-      if (element) {
-        return element;
-      }
-    }
-    return null;
+    return nonNullableTypeNodes(unwrapped).flatMap(arrayElementTypeNodes);
   }
   if (ts.isTypeOperatorNode(unwrapped) && unwrapped.operator === ts.SyntaxKind.ReadonlyKeyword) {
-    return arrayElementTypeNode(unwrapped.type);
+    return arrayElementTypeNodes(unwrapped.type);
   }
   if (ts.isArrayTypeNode(unwrapped)) {
-    return unwrapParenthesizedType(unwrapped.elementType);
+    return [unwrapParenthesizedType(unwrapped.elementType)];
   }
   if (!ts.isTypeReferenceNode(unwrapped) || !unwrapped.typeArguments || unwrapped.typeArguments.length !== 1) {
-    return null;
+    return [];
   }
   const typeName = unwrapped.typeName.getText();
   if (typeName !== "Array" && typeName !== "ReadonlyArray") {
-    return null;
+    return [];
   }
-  return unwrapParenthesizedType(unwrapped.typeArguments[0] as ts.TypeNode);
+  return [unwrapParenthesizedType(unwrapped.typeArguments[0] as ts.TypeNode)];
 }
 
 function referencedModel(typeText: string, modelNames: Set<string>): string | null {
