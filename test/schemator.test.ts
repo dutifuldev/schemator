@@ -366,6 +366,30 @@ describe("schemator", () => {
     }
   });
 
+  test("propagates nullable JSON Schema roots to required fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: ["object", "null"],
+          properties: {
+            id: { type: "string" },
+          },
+          required: ["id"],
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
+        ["id", false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts root JSON Schema array item fields", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -1435,6 +1459,31 @@ describe("schemator", () => {
       expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
         ["payload", true],
         ["payload.a", false],
+        ["items", true],
+        ["items[].b", false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("marks TypeScript array descendants optional when parent can be scalar", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Event = {",
+          "  items: Array<{",
+          "    b: string;",
+          "  }> | string;",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
         ["items", true],
         ["items[].b", false],
       ]);

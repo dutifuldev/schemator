@@ -561,9 +561,11 @@ function hasOnlyInlineObjectBranches(typeNodes: ts.TypeNode[]): boolean {
 }
 
 function hasOnlyInlineArrayObjectBranches(typeNodes: ts.TypeNode[]): boolean {
-  const arrayElements = typeNodes.map(arrayElementTypeNode).filter((candidate): candidate is ts.TypeNode => Boolean(candidate));
-  return arrayElements.length > 0 &&
-    arrayElements.every((element) => typeBranches(element).every((candidate) => ts.isTypeLiteralNode(candidate)));
+  return typeNodes.length > 0 &&
+    typeNodes.every((candidate) => {
+      const element = arrayElementTypeNode(candidate);
+      return Boolean(element && typeBranches(element).every((branch) => ts.isTypeLiteralNode(branch)));
+    });
 }
 
 function uniqueStrings(values: string[]): string[] {

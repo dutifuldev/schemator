@@ -23,7 +23,9 @@ export function extractJsonSchemaModel(
   source: SourceSpan,
 ): ModelNode {
   const fields: FieldNode[] = [];
-  visitSchemaObject(value, modelId, "", fields, source, value, new Set(), true);
+  const rootSchema = asSchema(value);
+  const rootRequired = !(rootSchema && hasSchemaType(rootSchema, "null"));
+  visitSchemaObject(value, modelId, "", fields, source, value, new Set(), rootRequired);
   return {
     id: modelId,
     kind: "object",
