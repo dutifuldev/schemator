@@ -905,6 +905,36 @@ describe("schemator", () => {
     }
   });
 
+  test("marks ordinary JSON array object fields optional when entries are not objects", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "document.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          items: [
+            {
+              nested: {
+                id: "a",
+              },
+            },
+            null,
+            "loose",
+          ],
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
+        ["items", true],
+        ["items[].nested", false],
+        ["items[].nested.id", false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("keeps nullable TypeScript model references object-like", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -1282,6 +1312,32 @@ describe("schemator", () => {
     }
   });
 
+  test("merges TypeScript object union property metadata", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Event =",
+          "  | {",
+          "      value: string;",
+          "    }",
+          "  | {",
+          "      value: number | null;",
+          "    };",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.type, field.required, field.nullable])).toEqual([
+        ["value", "string | number | null", true, true],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("marks nested TypeScript fields optional when unions include scalar branches", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -1450,9 +1506,38 @@ describe("schemator", () => {
         "entries",
         "entries[].sku",
       ]);
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
+        ["items", false],
+        ["items[].id", false],
+        ["entries", false],
+        ["entries[].sku", false],
+      ]);
       expect(graph.models[0]?.fields.filter((field) => field.path === "items" || field.path === "entries").map((field) => field.objectLike)).toEqual([
         true,
         true,
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("marks top-level nullable TypeScript array element fields optional", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Items = Array<{",
+          "  id: string;",
+          "} | null>;",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
+        ["items", true],
+        ["items[].id", false],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });

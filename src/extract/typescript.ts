@@ -246,6 +246,7 @@ function addArrayAliasFields(
     ...(ref ? { ref } : {}),
   });
   if (inlineObjectTypes.length > 0) {
+    const descendantRequired = !fieldNullable && hasOnlyInlineObjectBranches([elementType]);
     addTypeLiteralVariantFields(
       inlineObjectTypes,
       "items[]",
@@ -255,7 +256,7 @@ function addArrayAliasFields(
       startLine,
       modelNames,
       fields,
-      !fieldNullable,
+      descendantRequired,
     );
   }
 }
@@ -420,8 +421,7 @@ function addMemberGroupsFields(
       if (overrideExisting) {
         removeExistingPath(fields, path);
       }
-      addPropertyField(member, parentPath, modelId, sourceFile, sourcePath, startLine, modelNames, fields, {
-        addNested: false,
+      addUnionPropertyField(occurrences, member, parentPath, modelId, sourceFile, sourcePath, startLine, modelNames, fields, {
         ancestorRequired,
         required,
       });
@@ -463,6 +463,46 @@ function addMemberGroupsFields(
       }
     }
   }
+}
+
+function addUnionPropertyField(
+  occurrences: ts.PropertySignature[],
+  fallbackMember: ts.PropertySignature,
+  parentPath: string,
+  modelId: string,
+  sourceFile: ts.SourceFile,
+  sourcePath: string,
+  startLine: number,
+  modelNames: Set<string>,
+  fields: FieldNode[],
+  options: Required<Pick<AddPropertyFieldOptions, "ancestorRequired" | "required">>,
+): void {
+  const name = propertyNameText(fallbackMember.name);
+  if (!name) {
+    return;
+  }
+  const path = parentPath ? `${parentPath}.${name}` : name;
+  const typeNodes = occurrences.flatMap((candidate) => candidate.type ? nonNullableTypeNodes(candidate.type) : []);
+  const type = uniqueStrings(
+    occurrences.map((candidate) => candidate.type?.getText(sourceFile) ?? "unknown"),
+  ).join(" | ");
+  const ref = referencedModelFromTypeCandidates(typeNodes, sourceFile, modelNames) ?? referencedModel(type, modelNames);
+  const inlineObjectTypes = occurrences.flatMap((candidate) => propertyInlineObjectTypes(candidate));
+  const inlineArrayObjectTypes = occurrences.flatMap((candidate) => propertyInlineArrayObjectTypes(candidate));
+  const fieldRequired = options.required && options.ancestorRequired;
+  const fieldNullable = occurrences.some((candidate) => candidate.type ? typeAllowsNullish(candidate.type) : false);
+  const objectLike = Boolean(ref) || inlineObjectTypes.length > 0 || inlineArrayObjectTypes.length > 0;
+  fields.push({
+    path,
+    name,
+    type,
+    required: fieldRequired,
+    nullable: fieldNullable,
+    parent: modelId,
+    objectLike,
+    source: spanForNode(fallbackMember, sourceFile, sourcePath, startLine),
+    ...(ref ? { ref } : {}),
+  });
 }
 
 function addTypeLiteralVariantFields(
@@ -523,7 +563,16 @@ function hasOnlyInlineObjectBranches(typeNodes: ts.TypeNode[]): boolean {
 function hasOnlyInlineArrayObjectBranches(typeNodes: ts.TypeNode[]): boolean {
   const arrayElements = typeNodes.map(arrayElementTypeNode).filter((candidate): candidate is ts.TypeNode => Boolean(candidate));
   return arrayElements.length > 0 &&
-    arrayElements.every((element) => nonNullableTypeNodes(element).every((candidate) => ts.isTypeLiteralNode(candidate)));
+    arrayElements.every((element) => typeBranches(element).every((candidate) => ts.isTypeLiteralNode(candidate)));
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function typeBranches(typeNode: ts.TypeNode): ts.TypeNode[] {
+  const unwrapped = unwrapParenthesizedType(typeNode);
+  return ts.isUnionTypeNode(unwrapped) ? unwrapped.types.map(unwrapParenthesizedType) : [unwrapped];
 }
 
 function memberGroupsForTypeNode(

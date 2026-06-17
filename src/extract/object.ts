@@ -133,9 +133,15 @@ function arrayObjectShape(value: unknown): ObjectShape | null {
     {},
   );
   const facts = pathFactsForObjects(objects, shape, "");
+  const optionalPaths = new Set(facts.optionalPaths);
+  if (objects.length !== value.length) {
+    for (const path of descendantPaths(shape, "")) {
+      optionalPaths.add(path);
+    }
+  }
   return {
     value: shape,
-    optionalPaths: facts.optionalPaths,
+    optionalPaths,
     nullablePaths: facts.nullablePaths,
   };
 }
@@ -219,7 +225,7 @@ function descendantPaths(value: unknown, parentPath: string): Set<string> {
   const paths = new Set<string>();
   if (isRecord(value)) {
     for (const [key, child] of Object.entries(value)) {
-      const path = `${parentPath}.${key}`;
+      const path = parentPath ? `${parentPath}.${key}` : key;
       paths.add(path);
       for (const descendant of descendantPaths(child, path)) {
         paths.add(descendant);
@@ -228,7 +234,7 @@ function descendantPaths(value: unknown, parentPath: string): Set<string> {
   }
   const arrayShape = arrayObjectShape(value);
   if (arrayShape) {
-    const arrayPath = `${parentPath}[]`;
+    const arrayPath = parentPath ? `${parentPath}[]` : "items[]";
     for (const [key, child] of Object.entries(arrayShape.value)) {
       const path = `${arrayPath}.${key}`;
       paths.add(path);
