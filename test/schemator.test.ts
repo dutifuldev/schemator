@@ -396,6 +396,42 @@ describe("schemator", () => {
     }
   });
 
+  test("propagates JSON Schema combinator nullability to nested required fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          properties: {
+            config: {
+              anyOf: [
+                {
+                  type: "object",
+                  properties: {
+                    id: { type: "string" },
+                  },
+                  required: ["id"],
+                },
+                { type: "null" },
+              ],
+            },
+          },
+          required: ["config"],
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required, field.nullable])).toEqual([
+        ["config", true, true],
+        ["config.id", false, false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("propagates nullable JSON Schema roots to required fields", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -1202,6 +1238,30 @@ describe("schemator", () => {
       expect(child?.objectLike).toBe(true);
       expect(child?.ref).toBe("Child");
       expect(child?.nullable).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("marks TypeScript Record fields as object-like boundaries", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Policy = {",
+          "  extra: Record<string, unknown>;",
+          "  metadata?: Readonly<Record<string, string>> | null;",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.objectLike, field.nullable])).toEqual([
+        ["extra", true, false],
+        ["metadata", true, true],
+      ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

@@ -293,7 +293,10 @@ function addPropertyField(
     .map(arrayElementTypeNode)
     .flatMap((candidate) => candidate ? nonNullableTypeNodes(candidate) : [])
     .filter((candidate): candidate is ts.TypeLiteralNode => ts.isTypeLiteralNode(candidate));
-  const objectLike = Boolean(ref) || inlineObjectTypes.length > 0 || inlineArrayObjectTypes.length > 0;
+  const objectLike = Boolean(ref) ||
+    inlineObjectTypes.length > 0 ||
+    inlineArrayObjectTypes.length > 0 ||
+    typeCandidates.some(isRecordLikeType);
   const fieldRequired = (options.required ?? !member.questionToken) && (options.ancestorRequired ?? true);
   const fieldNullable = typeNode ? typeAllowsNullish(typeNode) : false;
   const descendantRequired = fieldRequired && !fieldNullable;
@@ -492,7 +495,10 @@ function addUnionPropertyField(
   const inlineArrayObjectTypes = occurrences.flatMap((candidate) => propertyInlineArrayObjectTypes(candidate));
   const fieldRequired = options.required && options.ancestorRequired;
   const fieldNullable = occurrences.some((candidate) => candidate.type ? typeAllowsNullish(candidate.type) : false);
-  const objectLike = Boolean(ref) || inlineObjectTypes.length > 0 || inlineArrayObjectTypes.length > 0;
+  const objectLike = Boolean(ref) ||
+    inlineObjectTypes.length > 0 ||
+    inlineArrayObjectTypes.length > 0 ||
+    typeNodes.some(isRecordLikeType);
   fields.push({
     path,
     name,
@@ -635,6 +641,24 @@ function typeReferenceName(typeNode: ts.TypeReferenceNode): string | null {
     return typeName.right.text;
   }
   return null;
+}
+
+function isRecordLikeType(typeNode: ts.TypeNode): boolean {
+  const unwrapped = unwrapParenthesizedType(typeNode);
+  if (ts.isTypeReferenceNode(unwrapped)) {
+    const refName = typeReferenceName(unwrapped);
+    if (refName === "Record") {
+      return true;
+    }
+    if (refName === "Readonly" && unwrapped.typeArguments?.length === 1) {
+      return isRecordLikeType(unwrapped.typeArguments[0] as ts.TypeNode);
+    }
+    return false;
+  }
+  if (ts.isTypeOperatorNode(unwrapped) && unwrapped.operator === ts.SyntaxKind.ReadonlyKeyword) {
+    return isRecordLikeType(unwrapped.type);
+  }
+  return false;
 }
 
 function propertyNameText(name: ts.PropertyName): string | null {

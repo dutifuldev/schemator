@@ -25,7 +25,7 @@ export function extractJsonSchemaModel(
 ): ModelNode {
   const fields: FieldNode[] = [];
   const rootSchema = asSchema(value);
-  const rootRequired = !(rootSchema && hasSchemaType(rootSchema, "null"));
+  const rootRequired = !(rootSchema && schemaAllowsNull(rootSchema));
   visitSchemaObject(value, modelId, "", fields, source, value, new Set(), rootRequired);
   return {
     id: modelId,
@@ -70,7 +70,7 @@ function visitSchemaObject(
       const rootItemSchema = itemObjectSchema(schema, root, refStack);
       if (!rootItemSchema) {
         if (parentPath === "") {
-          const rootArrayNullable = hasSchemaType(schema, "null");
+          const rootArrayNullable = schemaAllowsNull(schema);
           addField(fields, {
             path: "items",
             name: "items",
@@ -99,7 +99,7 @@ function visitSchemaObject(
         visitSchemaCombinators(schema, modelId, parentPath, fields, source, root, refStack, ancestorRequired);
         return;
       }
-      const rootArrayNullable = hasSchemaType(schema, "null");
+      const rootArrayNullable = schemaAllowsNull(schema);
       addField(fields, {
         path: "items",
         name: "items",
@@ -139,7 +139,7 @@ function visitSchemaObject(
     const path = joinFieldPath(parentPath, name);
     const type = schemaType(childSchema ?? child);
     const fieldRequired = ancestorRequired && required.has(name);
-    const fieldNullable = Boolean(childSchema && hasSchemaType(childSchema, "null"));
+    const fieldNullable = Boolean(childSchema && schemaAllowsNull(childSchema));
     const descendantRequired = fieldRequired && !fieldNullable;
     const itemSchema = childSchema ? itemObjectSchema(childSchema, root, refStack) : null;
     const objectLike = Boolean(childSchema && hasNestedSchema(childSchema, root, refStack));
@@ -288,6 +288,25 @@ function hasSchemaType(schema: JsonSchemaLike, type: string): boolean {
     return true;
   }
   return Array.isArray(schema.type) && schema.type.includes(type);
+}
+
+function schemaAllowsNull(schema: JsonSchemaLike): boolean {
+  if (hasSchemaType(schema, "null")) {
+    return true;
+  }
+  const nullableAlternatives = [...schemaArray(schema.anyOf), ...schemaArray(schema.oneOf)];
+  if (nullableAlternatives.some((candidate) => {
+    const candidateSchema = asSchema(candidate);
+    return Boolean(candidateSchema && schemaAllowsNull(candidateSchema));
+  })) {
+    return true;
+  }
+  const allOf = schemaArray(schema.allOf);
+  return allOf.length > 0 &&
+    allOf.every((candidate) => {
+      const candidateSchema = asSchema(candidate);
+      return Boolean(candidateSchema && schemaAllowsNull(candidateSchema));
+    });
 }
 
 function resolveRefSchema(root: unknown, ref: string, refStack: Set<string>): ResolvedSchema | null {
