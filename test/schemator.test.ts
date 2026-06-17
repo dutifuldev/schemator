@@ -7,6 +7,7 @@ import { extractGraph } from "../src/extract/index.js";
 import { pathToFileNamePart } from "../src/files.js";
 import { applyAggregateToGraph, hasSimplification } from "../src/graph.js";
 import { writeDeterministicReviews } from "../src/review.js";
+import type { AggregateReview, ModelGraph } from "../src/types.js";
 
 describe("schemator", () => {
   test("extracts nested TypeScript fields from Markdown", async () => {
@@ -142,4 +143,118 @@ describe("schemator", () => {
   test("uses collision-free artifact filename parts", () => {
     expect(pathToFileNamePart("a/b")).not.toBe(pathToFileNamePart("a_b"));
   });
+
+  test("composes parent and child renames", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [
+            field("config", "config", "object", true),
+            field("config.recipe", "recipe", "string", false),
+            field("items", "items", "array", true),
+            field("items[].recipe", "recipe", "string", false),
+          ],
+        },
+      ],
+    };
+    const aggregate: AggregateReview = {
+      schemaVersion: 1,
+      ok: true,
+      summary: {
+        totalFields: 4,
+        keep: 0,
+        rename: 4,
+        merge: 0,
+        derive: 0,
+        move: 0,
+        defer: 0,
+        remove: 0,
+        opaque: 0,
+      },
+      findings: [],
+      decisions: [
+        review("config", "settings"),
+        review("config.recipe", "config.variant"),
+        review("items", "entries"),
+        review("items[].recipe", "items[].variant"),
+      ],
+    };
+
+    expect(applyAggregateToGraph(graph, aggregate).models[0]?.fields.map((item) => item.path)).toEqual([
+      "settings",
+      "settings.variant",
+      "entries",
+      "entries[].variant",
+    ]);
+  });
+
+  test("extracts TypeScript inline object arrays", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Cart = {",
+          "  items?: {",
+          "    id: string;",
+          "    recipe?: string;",
+          "  }[];",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((item) => item.path)).toEqual([
+        "items",
+        "items[].id",
+        "items[].recipe",
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
+
+function sourceSpan() {
+  return {
+    path: "schema.json",
+    span: { startLine: 1, endLine: 1 },
+  };
+}
+
+function field(path: string, name: string, type: string, objectLike: boolean) {
+  return {
+    path,
+    name,
+    type,
+    required: true,
+    nullable: false,
+    parent: "JsonSchema",
+    objectLike,
+    source: sourceSpan(),
+  };
+}
+
+function review(fieldPath: string, finalPath: string) {
+  return {
+    schemaVersion: 1 as const,
+    model: "JsonSchema",
+    fieldPath,
+    decision: "rename" as const,
+    finalName: finalPath.split(".").at(-1)?.replace(/\[\]$/, "") ?? finalPath,
+    finalPath,
+    finalType: "string",
+    required: true,
+    rationale: "test",
+    alternatives: [finalPath],
+    simplestChoice: finalPath,
+    confidence: "high" as const,
+    questions: [],
+  };
+}

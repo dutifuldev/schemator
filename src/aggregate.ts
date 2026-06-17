@@ -2,6 +2,7 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { readJson } from "./files.js";
 import type { AggregateFinding, AggregateReview, Decision, FieldReview, ModelGraph } from "./types.js";
+import { validateFieldReview } from "./validate.js";
 
 const decisions: Decision[] = [
   "keep",
@@ -22,6 +23,10 @@ export async function readReviews(reviewDir: string): Promise<FieldReview[]> {
       continue;
     }
     const value = await readJson(join(reviewDir, entry.name));
+    const validation = validateFieldReview(value);
+    if (!validation.ok) {
+      throw new Error(`${entry.name} failed field-review schema validation:\n${validation.errors.join("\n")}`);
+    }
     reviews.push(assertFieldReview(value, entry.name));
   }
   return reviews.sort((left, right) =>
@@ -132,7 +137,7 @@ function assertFieldReview(value: unknown, fileName: string): FieldReview {
   const alternatives = value["alternatives"];
   const questions = value["questions"];
   return {
-    schemaVersion: 1,
+    schemaVersion: requireSchemaVersion(value, fileName),
     model: requireString(value, "model", fileName),
     fieldPath: requireString(value, "fieldPath", fileName),
     decision: decision as Decision,
@@ -149,6 +154,14 @@ function assertFieldReview(value: unknown, fileName: string): FieldReview {
     questions: Array.isArray(questions) ? questions.filter((item): item is string => typeof item === "string") : [],
     ...(typeof value["ownerBoundary"] === "string" ? { ownerBoundary: value["ownerBoundary"] } : {}),
   };
+}
+
+function requireSchemaVersion(value: Record<string, unknown>, fileName: string): 1 {
+  const schemaVersion = value["schemaVersion"];
+  if (schemaVersion !== 1) {
+    throw new Error(`${fileName} missing schemaVersion 1`);
+  }
+  return 1;
 }
 
 function requireString(value: Record<string, unknown>, key: string, fileName: string): string {

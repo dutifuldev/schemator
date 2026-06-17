@@ -105,7 +105,10 @@ function addPropertyField(
   const typeNode = member.type;
   const type = typeNode?.getText(sourceFile) ?? "unknown";
   const ref = referencedModel(type, modelNames);
-  const objectLike = Boolean(ref) || Boolean(typeNode && ts.isTypeLiteralNode(typeNode));
+  const arrayElement = typeNode && ts.isArrayTypeNode(typeNode) ? typeNode.elementType : null;
+  const inlineObjectType = typeNode && ts.isTypeLiteralNode(typeNode) ? typeNode : null;
+  const inlineArrayObjectType = arrayElement && ts.isTypeLiteralNode(arrayElement) ? arrayElement : null;
+  const objectLike = Boolean(ref) || Boolean(inlineObjectType) || Boolean(inlineArrayObjectType);
   fields.push({
     path,
     name,
@@ -118,10 +121,12 @@ function addPropertyField(
     ...(ref ? { ref } : {}),
   });
 
-  if (typeNode && ts.isTypeLiteralNode(typeNode)) {
-    for (const nested of typeNode.members) {
+  const nestedType = inlineArrayObjectType ?? inlineObjectType;
+  if (nestedType) {
+    const nestedParentPath = inlineArrayObjectType ? `${path}[]` : path;
+    for (const nested of nestedType.members) {
       if (ts.isPropertySignature(nested)) {
-        addPropertyField(nested, path, modelId, sourceFile, sourcePath, startLine, modelNames, fields);
+        addPropertyField(nested, nestedParentPath, modelId, sourceFile, sourcePath, startLine, modelNames, fields);
       }
     }
   }

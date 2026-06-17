@@ -34,6 +34,8 @@
     "build": "tsc -p tsconfig.json",
     "check": "npm run typecheck && npm test && npm run build",
     "dev": "tsx src/cli.ts",
+    "prepare": "npm run build",
+    "prepack": "npm run build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

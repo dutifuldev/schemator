@@ -51,16 +51,11 @@ function isRemoved(path: string, removed: Set<string>): boolean {
 
 function applyRenames(field: FieldNode, renameMap: Map<string, string>): FieldNode {
   let nextPath = field.path;
-  const mappings = [...renameMap.entries()].sort((left, right) => right[0].length - left[0].length);
+  const mappings = [...renameMap.entries()]
+    .filter(([from]) => pathMatches(field.path, from))
+    .sort((left, right) => right[0].length - left[0].length);
   for (const [from, to] of mappings) {
-    if (nextPath === from) {
-      nextPath = to;
-      break;
-    }
-    if (nextPath.startsWith(`${from}.`)) {
-      nextPath = `${to}${nextPath.slice(from.length)}`;
-      break;
-    }
+    nextPath = replacePathPrefix(nextPath, from, to);
   }
   const segments = nextPath.split(".");
   const nextName = segments[segments.length - 1] ?? field.name;
@@ -69,4 +64,18 @@ function applyRenames(field: FieldNode, renameMap: Map<string, string>): FieldNo
     path: nextPath,
     name: nextName,
   };
+}
+
+function pathMatches(path: string, from: string): boolean {
+  return path === from || path.startsWith(`${from}.`) || path.startsWith(`${from}[].`);
+}
+
+function replacePathPrefix(path: string, from: string, to: string): string {
+  if (path === from) {
+    return to;
+  }
+  if (path.startsWith(`${from}.`) || path.startsWith(`${from}[].`)) {
+    return `${to}${path.slice(from.length)}`;
+  }
+  return path;
 }
