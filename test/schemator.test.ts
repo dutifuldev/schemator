@@ -877,6 +877,74 @@ describe("schemator", () => {
     }
   });
 
+  test("marks nullable JSON Schema array item fields optional", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          required: ["items"],
+          properties: {
+            items: {
+              type: ["array", "null"],
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                },
+                required: ["id"],
+              },
+            },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required, field.nullable])).toEqual([
+        ["items", true, true],
+        ["items[].id", false, false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("marks scalar-capable JSON Schema array item fields optional", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          required: ["items"],
+          properties: {
+            items: {
+              type: ["array", "string"],
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                },
+                required: ["id"],
+              },
+            },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
+        ["items", true],
+        ["items[].id", false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts JSON Schema local ref object fields", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -1543,6 +1611,40 @@ describe("schemator", () => {
         ["items", true],
         ["items[].nested", false],
         ["items[].nested.id", false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("marks ordinary JSON array descendants optional when samples are not arrays", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "document.json");
+      await writeFile(
+        source,
+        JSON.stringify([
+          {
+            items: [
+              {
+                id: 1,
+              },
+            ],
+          },
+          {
+            items: null,
+          },
+          {
+            items: "loose",
+          },
+        ]),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required, field.nullable])).toEqual([
+        ["items", true, false],
+        ["items[].items", true, true],
+        ["items[].items[].id", false, false],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });

@@ -249,6 +249,12 @@ function pathFactsForObjects(
       }
       const arrayShape = arrayObjectShape(value, seenObjects);
       if (arrayShape) {
+        const arrayValues = presentValues.filter(Array.isArray);
+        if (arrayValues.length !== presentValues.length) {
+          for (const descendant of descendantPaths(arrayShape.value, `${path}[]`, seenObjects)) {
+            optionalPaths.add(descendant);
+          }
+        }
         for (const nested of prefixPaths(arrayShape.optionalPaths, `${path}[]`)) {
           optionalPaths.add(nested);
         }
