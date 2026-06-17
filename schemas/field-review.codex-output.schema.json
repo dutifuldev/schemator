@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://dutifuldev.github.io/schemator/schemas/field-review.schema.json",
+  "$id": "https://dutifuldev.github.io/schemator/schemas/field-review.codex-output.schema.json",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -9,13 +9,15 @@
     "fieldPath",
     "decision",
     "finalName",
+    "finalPath",
     "finalType",
     "required",
     "rationale",
     "alternatives",
     "simplestChoice",
     "confidence",
-    "questions"
+    "questions",
+    "ownerBoundary"
   ],
   "properties": {
     "schemaVersion": { "type": "integer", "const": 1 },
@@ -25,7 +27,7 @@
       "enum": ["keep", "rename", "merge", "derive", "move", "defer", "remove", "opaque"]
     },
     "finalName": { "type": "string", "minLength": 1 },
-    "finalPath": { "type": "string", "minLength": 1 },
+    "finalPath": { "type": ["string", "null"] },
     "finalType": { "type": "string" },
     "required": { "type": "boolean" },
     "rationale": { "type": "string", "minLength": 1 },
@@ -40,6 +42,6 @@
       "type": "array",
       "items": { "type": "string" }
     },
-    "ownerBoundary": { "type": "string" }
+    "ownerBoundary": { "type": ["string", "null"] }
   }
 }

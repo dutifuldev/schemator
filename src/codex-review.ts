@@ -41,12 +41,12 @@ export async function writeCodexReviews(
 async function runCodexFieldReview(prompt: string, options: CodexReviewOptions): Promise<FieldReview> {
   const command = options.command ?? "codex";
   const args = [
+    "--ask-for-approval",
+    "never",
     "exec",
     "--skip-git-repo-check",
     "--sandbox",
     "read-only",
-    "--ask-for-approval",
-    "never",
     "--output-schema",
     fieldReviewSchemaPath(),
     "--color",
@@ -62,7 +62,7 @@ async function runCodexFieldReview(prompt: string, options: CodexReviewOptions):
 }
 
 function fieldReviewSchemaPath(): string {
-  return join(dirname(fileURLToPath(import.meta.url)), "..", "schemas", "field-review.schema.json");
+  return join(dirname(fileURLToPath(import.meta.url)), "..", "schemas", "field-review.codex-output.schema.json");
 }
 
 function execWithInput(
@@ -111,22 +111,36 @@ function parseFieldReviewOutput(output: string): FieldReview {
   const trimmed = output.trim();
   const direct = tryParseJson(trimmed);
   if (direct) {
-    return direct as FieldReview;
+    return normalizeFieldReview(direct);
   }
 
   const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(output);
   const fencedJson = fenced?.[1] ? tryParseJson(fenced[1].trim()) : null;
   if (fencedJson) {
-    return fencedJson as FieldReview;
+    return normalizeFieldReview(fencedJson);
   }
 
   const objectText = firstJsonObject(output);
   const objectJson = objectText ? tryParseJson(objectText) : null;
   if (objectJson) {
-    return objectJson as FieldReview;
+    return normalizeFieldReview(objectJson);
   }
 
   throw new Error("Codex review did not return a JSON object");
+}
+
+function normalizeFieldReview(value: unknown): FieldReview {
+  if (!isRecord(value)) {
+    return value as FieldReview;
+  }
+  const review = { ...value };
+  if (review["finalPath"] === null) {
+    delete review["finalPath"];
+  }
+  if (review["ownerBoundary"] === null) {
+    delete review["ownerBoundary"];
+  }
+  return review as FieldReview;
 }
 
 function tryParseJson(value: string): unknown | null {
@@ -172,4 +186,8 @@ function firstJsonObject(value: string): string | null {
     }
   }
   return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

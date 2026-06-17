@@ -133,13 +133,15 @@ describe("schemator", () => {
           "    fieldPath,",
           "    decision: finalName === fieldName ? 'keep' : 'rename',",
           "    finalName,",
+          "    finalPath: null,",
           "    finalType: 'string',",
           "    required: false,",
           "    rationale: 'Fake reviewer received the Lindy field prompt.',",
           "    alternatives: [finalName, 'remove'],",
           "    simplestChoice: finalName,",
           "    confidence: 'high',",
-          "    questions: []",
+          "    questions: [],",
+          "    ownerBoundary: null",
           "  }));",
           "});",
         ].join("\n"),
@@ -175,6 +177,7 @@ describe("schemator", () => {
       expect(reviews).toHaveLength(1);
       expect(reviews[0]?.decision).toBe("rename");
       expect(reviews[0]?.finalName).toBe("systemPromptVariant");
+      expect(reviews[0]).not.toHaveProperty("ownerBoundary");
       expect(reviewFiles).toHaveLength(1);
     } finally {
       await rm(dir, { recursive: true, force: true });
