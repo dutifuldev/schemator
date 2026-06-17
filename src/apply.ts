@@ -1,4 +1,5 @@
 import type { AggregateReview, ModelGraph } from "./types.js";
+import { replaceLastFieldPathSegment } from "./field-path.js";
 import { applyRenameMapToPath } from "./graph.js";
 
 export function renderPatchPlan(graph: ModelGraph, aggregate: AggregateReview): string {
@@ -66,12 +67,7 @@ function finalPathForDecision(
 }
 
 function rawFinalPathForRename(decision: AggregateReview["decisions"][number]): string {
-  if (decision.finalPath) {
-    return decision.finalPath;
-  }
-  const lastDot = decision.fieldPath.lastIndexOf(".");
-  const prefix = lastDot === -1 ? "" : decision.fieldPath.slice(0, lastDot + 1);
-  return `${prefix}${decision.finalName}`;
+  return decision.finalPath ?? replaceLastFieldPathSegment(decision.fieldPath, decision.finalName);
 }
 
 function lastSegment(path: string): string {

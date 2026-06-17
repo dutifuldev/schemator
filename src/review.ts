@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { replaceLastFieldPathSegment } from "./field-path.js";
 import type { FieldNode, FieldReview, ModelGraph, ReviewOptions } from "./types.js";
 import { pathToFileNamePart, prepareGeneratedOutputDir, writeJson } from "./files.js";
 
@@ -29,7 +30,7 @@ export function reviewField(
   const rule = decisionRule(field, hasNestedContext);
   const finalPath = rule.finalName === field.name
     ? field.path
-    : replaceLastPathSegment(field.path, rule.finalName);
+    : replaceLastFieldPathSegment(field.path, rule.finalName);
   return {
     schemaVersion: 1,
     model: modelId,
@@ -175,12 +176,6 @@ function alternativesFor(field: FieldNode): string[] {
     return [field.name, `${field.name}Ref`, "remove"];
   }
   return [field.name, "remove"];
-}
-
-function replaceLastPathSegment(path: string, finalName: string): string {
-  const segments = path.split(".");
-  segments[segments.length - 1] = finalName;
-  return segments.join(".");
 }
 
 function hasNestedReviewContext(graph: ModelGraph, modelId: string, field: FieldNode): boolean {

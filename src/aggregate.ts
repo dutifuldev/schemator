@@ -1,5 +1,6 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { parentFieldPath, replaceLastFieldPathSegment } from "./field-path.js";
 import { applyAggregateToGraph } from "./graph.js";
 import { readJson } from "./files.js";
 import type { AggregateFinding, AggregateReview, Decision, FieldReview, ModelGraph } from "./types.js";
@@ -109,7 +110,7 @@ export function aggregateReviews(graph: ModelGraph, reviews: FieldReview[]): Agg
         message: "Low-confidence simplification decisions require focused follow-up before reduction.",
       });
     }
-    if (review.decision === "rename" && parentPath(finalPathForRename(review)) !== parentPath(review.fieldPath)) {
+    if (review.decision === "rename" && parentFieldPath(finalPathForRename(review)) !== parentFieldPath(review.fieldPath)) {
       findings.push({
         severity: "error",
         model: review.model,
@@ -219,16 +220,7 @@ function isDescendantPath(path: string, parent: string): boolean {
 }
 
 function finalPathForRename(review: FieldReview): string {
-  if (review.finalPath) {
-    return review.finalPath;
-  }
-  const parent = parentPath(review.fieldPath);
-  return parent ? `${parent}.${review.finalName}` : review.finalName;
-}
-
-function parentPath(path: string): string {
-  const lastDot = path.lastIndexOf(".");
-  return lastDot === -1 ? "" : path.slice(0, lastDot);
+  return review.finalPath ?? replaceLastFieldPathSegment(review.fieldPath, review.finalName);
 }
 
 function reviewKey(model: string, fieldPath: string): string {

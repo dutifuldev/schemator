@@ -648,6 +648,7 @@ describe("schemator", () => {
       );
       const graph = await extractGraph(source);
 
+      expect(graph.models[0]?.kind).toBe("array");
       expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["items", "items[].id"]);
       expect(graph.models[0]?.fields[0]?.objectLike).toBe(true);
     } finally {
@@ -674,6 +675,7 @@ describe("schemator", () => {
       );
       const graph = await extractGraph(source);
 
+      expect(graph.models[0]?.kind).toBe("array");
       expect(graph.models[0]?.fields.map((field) => [field.path, field.type, field.objectLike])).toEqual([
         ["items", "array", true],
         ["items[].id", "string", false],
@@ -1290,6 +1292,36 @@ describe("schemator", () => {
 
       expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["children", "children[].id"]);
       expect(graph.models[0]?.fields[0]?.objectLike).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves array kind for root JSON Schema array refs", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          $ref: "#/$defs/ChildList",
+          $defs: {
+            ChildList: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                },
+              },
+            },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.kind).toBe("array");
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["items", "items[].id"]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -3375,6 +3407,29 @@ describe("schemator", () => {
       ],
     };
 
+    expect(applyAggregateToGraph(graph, aggregate).models[0]?.fields.map((item) => [item.path, item.name])).toEqual([
+      ["c~1d", "c.d"],
+    ]);
+  });
+
+  test("escapes finalName when rename review omits finalPath", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [
+            field("a~1b", "a.b", "number", false),
+          ],
+        },
+      ],
+    };
+    const aggregate = aggregateReviews(graph, [reviewWithoutFinalPath("a~1b", "c.d")]);
+
+    expect(aggregate.ok).toBe(true);
     expect(applyAggregateToGraph(graph, aggregate).models[0]?.fields.map((item) => [item.path, item.name])).toEqual([
       ["c~1d", "c.d"],
     ]);

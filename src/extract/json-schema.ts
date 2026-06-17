@@ -1,4 +1,4 @@
-import type { FieldNode, ModelNode, SourceSpan } from "../types.js";
+import type { FieldNode, ModelKind, ModelNode, SourceSpan } from "../types.js";
 import { joinFieldPath } from "../field-path.js";
 
 type JsonSchemaLike = {
@@ -30,10 +30,11 @@ export function extractJsonSchemaModel(
     ? resolveRefSchema(value, rootSchema.$ref, new Set())
     : null;
   const rootRequired = Boolean(rootSchema && schemaOrRefAlwaysObject(rootSchema, rootRefSchema, value, new Set()));
+  const kind = rootSchema ? schemaOrRefModelKind(rootSchema, rootRefSchema, value, new Set()) : "object";
   visitSchemaObject(value, modelId, "", fields, source, value, new Set(), rootRequired);
   return {
     id: modelId,
-    kind: "object",
+    kind,
     source,
     fields,
   };
@@ -532,6 +533,44 @@ function schemaOrRefAlwaysArray(
     return schemaAlwaysArray(refSchema.value, root, withRef(refStack, refSchema.ref));
   }
   return schemaAlwaysArray(schema, root, refStack);
+}
+
+function schemaOrRefModelKind(
+  schema: JsonSchemaLike,
+  refSchema: ResolvedSchema | null,
+  root: unknown,
+  refStack: Set<string>,
+): ModelKind {
+  if (refSchema) {
+    return schemaModelKind(refSchema.value, root, withRef(refStack, refSchema.ref));
+  }
+  return schemaModelKind(schema, root, refStack);
+}
+
+function schemaModelKind(value: unknown, root: unknown, refStack: Set<string>): ModelKind {
+  const schema = asSchema(value);
+  if (!schema) {
+    return "object";
+  }
+  if (typeof schema.$ref === "string") {
+    if (refStack.has(schema.$ref)) {
+      return "object";
+    }
+    const refSchema = resolveRefSchema(root, schema.$ref, refStack);
+    return refSchema ? schemaModelKind(refSchema.value, root, withRef(refStack, refSchema.ref)) : "object";
+  }
+  if (hasSchemaType(schema, "array") || "items" in schema) {
+    return "array";
+  }
+  if (schemaArray(schema.allOf).some((candidate) => schemaModelKind(candidate, root, refStack) === "array")) {
+    return "array";
+  }
+  if ([...schemaArray(schema.anyOf), ...schemaArray(schema.oneOf)].some((candidate) =>
+    schemaModelKind(candidate, root, refStack) === "array"
+  )) {
+    return "array";
+  }
+  return "object";
 }
 
 function schemaAlwaysArray(value: unknown, root: unknown, refStack: Set<string>): boolean {
