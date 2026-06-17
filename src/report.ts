@@ -1,4 +1,5 @@
 import type { AggregateReview, ModelGraph } from "./types.js";
+import { applyRenameMapToPath } from "./graph.js";
 
 export function renderReport(graph: ModelGraph, aggregate: AggregateReview, finalGraph?: ModelGraph): string {
   const lines: string[] = [];
@@ -34,9 +35,10 @@ export function renderReport(graph: ModelGraph, aggregate: AggregateReview, fina
   lines.push("");
   lines.push("| Model | Field | Decision | Final path | Confidence | Rationale |");
   lines.push("| --- | --- | --- | --- | --- | --- |");
+  const renameMaps = renameMapsByModel(aggregate);
   for (const decision of aggregate.decisions) {
     lines.push(
-      `| \`${escapePipe(decision.model)}\` | \`${escapePipe(decision.fieldPath)}\` | ${decision.decision} | \`${escapePipe(decision.finalPath ?? decision.finalName)}\` | ${decision.confidence} | ${escapePipe(decision.rationale)} |`,
+      `| \`${escapePipe(decision.model)}\` | \`${escapePipe(decision.fieldPath)}\` | ${decision.decision} | \`${escapePipe(finalPathForDecision(decision, renameMaps))}\` | ${decision.confidence} | ${escapePipe(decision.rationale)} |`,
     );
   }
   lines.push("");
@@ -73,4 +75,37 @@ export function renderReport(graph: ModelGraph, aggregate: AggregateReview, fina
 
 function escapePipe(value: string): string {
   return value.replace(/\|/g, "\\|").replace(/\n/g, " ");
+}
+
+function renameMapsByModel(aggregate: AggregateReview): Map<string, Map<string, string>> {
+  const maps = new Map<string, Map<string, string>>();
+  for (const decision of aggregate.decisions) {
+    if (decision.decision !== "rename") {
+      continue;
+    }
+    const renameMap = maps.get(decision.model) ?? new Map<string, string>();
+    renameMap.set(decision.fieldPath, rawFinalPathForRename(decision));
+    maps.set(decision.model, renameMap);
+  }
+  return maps;
+}
+
+function finalPathForDecision(
+  decision: AggregateReview["decisions"][number],
+  renameMaps: Map<string, Map<string, string>>,
+): string {
+  const renameMap = renameMaps.get(decision.model);
+  if (renameMap) {
+    return applyRenameMapToPath(decision.fieldPath, renameMap);
+  }
+  return decision.finalPath ?? decision.finalName;
+}
+
+function rawFinalPathForRename(decision: AggregateReview["decisions"][number]): string {
+  if (decision.finalPath) {
+    return decision.finalPath;
+  }
+  const lastDot = decision.fieldPath.lastIndexOf(".");
+  const prefix = lastDot === -1 ? "" : decision.fieldPath.slice(0, lastDot + 1);
+  return `${prefix}${decision.finalName}`;
 }

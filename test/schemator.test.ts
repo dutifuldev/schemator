@@ -10,6 +10,7 @@ import { extractGraph } from "../src/extract/index.js";
 import { pathToFileNamePart } from "../src/files.js";
 import { applyAggregateToGraph, hasSimplification } from "../src/graph.js";
 import { writeReviewJobs } from "../src/jobs.js";
+import { renderReport } from "../src/report.js";
 import { writeDeterministicReviews } from "../src/review.js";
 import type { AggregateReview, ModelGraph } from "../src/types.js";
 
@@ -41,6 +42,30 @@ describe("schemator", () => {
         "nested",
         "nested.value",
       ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("extracts indented Markdown fences", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "proposal.md");
+      await writeFile(
+        source,
+        [
+          "- model",
+          "  ```ts",
+          "  type ModelProfilePolicy = {",
+          "    promptRecipe?: string;",
+          "  };",
+          "  ```",
+        ].join("\n"),
+      );
+
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["promptRecipe"]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -735,6 +760,66 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts nullable TypeScript array element object unions", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Cart = {",
+          "  items?: Array<{",
+          "    id: string;",
+          "  } | null>;",
+          "  entries?: ({",
+          "    sku: string;",
+          "  } | null)[];",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual([
+        "items",
+        "items[].id",
+        "entries",
+        "entries[].sku",
+      ]);
+      expect(graph.models[0]?.fields.filter((field) => field.path === "items" || field.path === "entries").map((field) => field.objectLike)).toEqual([
+        true,
+        true,
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("extracts top-level TypeScript array aliases", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Profiles = Array<{",
+          "  id: string;",
+          "  promptRecipe?: string;",
+          "} | null>;",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.kind).toBe("array");
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual([
+        "items",
+        "items[].id",
+        "items[].promptRecipe",
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("uses collision-free artifact filename parts", () => {
     expect(pathToFileNamePart("a/b")).not.toBe(pathToFileNamePart("a_b"));
   });
@@ -980,6 +1065,49 @@ describe("schemator", () => {
       "entries",
       "entries[].variant",
     ]);
+  });
+
+  test("reports composed nested rename paths", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [
+            field("config", "config", "object", true),
+            field("config.recipe", "recipe", "string", false),
+          ],
+        },
+      ],
+    };
+    const aggregate: AggregateReview = {
+      schemaVersion: 1,
+      ok: true,
+      summary: {
+        totalFields: 2,
+        keep: 0,
+        rename: 2,
+        merge: 0,
+        derive: 0,
+        move: 0,
+        defer: 0,
+        remove: 0,
+        opaque: 0,
+      },
+      findings: [],
+      decisions: [
+        review("config", "settings"),
+        review("config.recipe", "config.variant"),
+      ],
+    };
+    const simplified = applyAggregateToGraph(graph, aggregate);
+    const report = renderReport(graph, aggregate, simplified);
+
+    expect(report).toContain("| `JsonSchema` | `config.recipe` | rename | `settings.variant` |");
+    expect(report).toContain("| `settings.variant` | `string` | yes | no |");
   });
 
   test("composes nested rename paths in patch plans", () => {

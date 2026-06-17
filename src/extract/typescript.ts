@@ -61,6 +61,8 @@ function declarationToModel(
         addPropertyField(member, "", id, sourceFile, sourcePath, startLine, modelNames, fields);
       }
     }
+  } else if (ts.isTypeAliasDeclaration(declaration)) {
+    addArrayAliasFields(declaration, sourceFile, sourcePath, startLine, modelNames, fields);
   }
   return {
     id,
@@ -97,7 +99,44 @@ function modelKind(declaration: Declaration): ModelKind {
   if (ts.isArrayTypeNode(declaration.type)) {
     return "array";
   }
+  if (arrayElementTypeNode(declaration.type)) {
+    return "array";
+  }
   return "scalar";
+}
+
+function addArrayAliasFields(
+  declaration: ts.TypeAliasDeclaration,
+  sourceFile: ts.SourceFile,
+  sourcePath: string,
+  startLine: number,
+  modelNames: Set<string>,
+  fields: FieldNode[],
+): void {
+  const elementType = arrayElementTypeNode(declaration.type);
+  if (!elementType) {
+    return;
+  }
+  const elementCandidates = nonNullableTypeNodes(elementType);
+  const ref =
+    referencedModelFromTypeCandidates(elementCandidates, sourceFile, modelNames) ??
+    referencedModel(elementType.getText(sourceFile), modelNames);
+  const inlineObjectType = firstTypeLiteral(elementCandidates);
+  const objectLike = Boolean(ref) || Boolean(inlineObjectType);
+  fields.push({
+    path: "items",
+    name: "items",
+    type: declaration.type.getText(sourceFile),
+    required: true,
+    nullable: declaration.type.getText(sourceFile).includes("null"),
+    parent: declaration.name.text,
+    objectLike,
+    source: spanForNode(declaration, sourceFile, sourcePath, startLine),
+    ...(ref ? { ref } : {}),
+  });
+  if (inlineObjectType) {
+    addTypeLiteralFields(inlineObjectType, "items[]", declaration.name.text, sourceFile, sourcePath, startLine, modelNames, fields);
+  }
 }
 
 function addPropertyField(
@@ -119,12 +158,11 @@ function addPropertyField(
   const type = typeNode?.getText(sourceFile) ?? "unknown";
   const typeCandidates = typeNode ? nonNullableTypeNodes(typeNode) : [];
   const ref = referencedModelFromTypeCandidates(typeCandidates, sourceFile, modelNames) ?? referencedModel(type, modelNames);
-  const inlineObjectType = typeCandidates.find((candidate) => ts.isTypeLiteralNode(candidate)) as
-    | ts.TypeLiteralNode
-    | undefined;
+  const inlineObjectType = firstTypeLiteral(typeCandidates);
   const inlineArrayObjectType = typeCandidates
     .map(arrayElementTypeNode)
-    .find((candidate): candidate is ts.TypeLiteralNode => Boolean(candidate && ts.isTypeLiteralNode(candidate)));
+    .flatMap((candidate) => candidate ? nonNullableTypeNodes(candidate) : [])
+    .find((candidate): candidate is ts.TypeLiteralNode => ts.isTypeLiteralNode(candidate));
   const objectLike = Boolean(ref) || Boolean(inlineObjectType) || Boolean(inlineArrayObjectType);
   fields.push({
     path,
@@ -141,12 +179,29 @@ function addPropertyField(
   const nestedType = inlineArrayObjectType ?? inlineObjectType;
   if (nestedType) {
     const nestedParentPath = inlineArrayObjectType ? `${path}[]` : path;
-    for (const nested of nestedType.members) {
-      if (ts.isPropertySignature(nested)) {
-        addPropertyField(nested, nestedParentPath, modelId, sourceFile, sourcePath, startLine, modelNames, fields);
-      }
+    addTypeLiteralFields(nestedType, nestedParentPath, modelId, sourceFile, sourcePath, startLine, modelNames, fields);
+  }
+}
+
+function addTypeLiteralFields(
+  typeNode: ts.TypeLiteralNode,
+  parentPath: string,
+  modelId: string,
+  sourceFile: ts.SourceFile,
+  sourcePath: string,
+  startLine: number,
+  modelNames: Set<string>,
+  fields: FieldNode[],
+): void {
+  for (const nested of typeNode.members) {
+    if (ts.isPropertySignature(nested)) {
+      addPropertyField(nested, parentPath, modelId, sourceFile, sourcePath, startLine, modelNames, fields);
     }
   }
+}
+
+function firstTypeLiteral(typeNodes: ts.TypeNode[]): ts.TypeLiteralNode | undefined {
+  return typeNodes.find((candidate): candidate is ts.TypeLiteralNode => ts.isTypeLiteralNode(candidate));
 }
 
 function propertyNameText(name: ts.PropertyName): string | null {
