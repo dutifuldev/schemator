@@ -267,7 +267,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function dedupeModels(models: ModelNode[]): ModelNode[] {
   const seen = new Map<string, number>();
-  const plans = models.map((model) => {
+  const plans: ModelDedupePlan[] = models.map((model) => {
     const occurrence = (seen.get(model.id) ?? 0) + 1;
     seen.set(model.id, occurrence);
     return {
@@ -277,17 +277,17 @@ function dedupeModels(models: ModelNode[]): ModelNode[] {
       dedupedId: occurrence === 1 ? model.id : `${model.id}#${occurrence}`,
     };
   });
-  const idsByBase = new Map<string, string[]>();
+  const plansByBase = new Map<string, ModelDedupePlan[]>();
   for (const plan of plans) {
-    const ids = idsByBase.get(plan.baseId) ?? [];
-    ids.push(plan.dedupedId);
-    idsByBase.set(plan.baseId, ids);
+    const basePlans = plansByBase.get(plan.baseId) ?? [];
+    basePlans.push(plan);
+    plansByBase.set(plan.baseId, basePlans);
   }
   return plans.map((plan) => ({
     ...plan.model,
     id: plan.dedupedId,
     fields: plan.model.fields.map((field) => {
-      const ref = field.ref ? dedupedRef(field.ref, plan.occurrence, idsByBase) : undefined;
+      const ref = field.ref ? dedupedRef(field.ref, plan, plansByBase) : undefined;
       return {
         ...field,
         parent: plan.dedupedId,
@@ -297,10 +297,38 @@ function dedupeModels(models: ModelNode[]): ModelNode[] {
   }));
 }
 
-function dedupedRef(ref: string, occurrence: number, idsByBase: Map<string, string[]>): string {
-  const ids = idsByBase.get(ref);
-  if (!ids) {
+type ModelDedupePlan = {
+  model: ModelNode;
+  baseId: string;
+  occurrence: number;
+  dedupedId: string;
+};
+
+function dedupedRef(
+  ref: string,
+  referringPlan: ModelDedupePlan,
+  plansByBase: Map<string, ModelDedupePlan[]>,
+): string {
+  const candidates = plansByBase.get(ref);
+  if (!candidates) {
     return ref;
   }
-  return ids[Math.min(occurrence - 1, ids.length - 1)] ?? ref;
+  if (ref === referringPlan.baseId) {
+    return referringPlan.dedupedId;
+  }
+  const sameSource = candidates.filter((candidate) => candidate.model.source.path === referringPlan.model.source.path);
+  const beforeOrAt = sameSource
+    .filter((candidate) => candidate.model.source.span.startLine <= referringPlan.model.source.span.startLine)
+    .sort((left, right) => right.model.source.span.startLine - left.model.source.span.startLine);
+  const nearestBefore = beforeOrAt[0];
+  if (nearestBefore) {
+    return nearestBefore.dedupedId;
+  }
+  const nearestAfter = sameSource.sort((left, right) =>
+    left.model.source.span.startLine - right.model.source.span.startLine
+  )[0];
+  if (nearestAfter) {
+    return nearestAfter.dedupedId;
+  }
+  return candidates[Math.min(referringPlan.occurrence - 1, candidates.length - 1)]?.dedupedId ?? ref;
 }

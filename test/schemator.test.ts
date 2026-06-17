@@ -1891,6 +1891,40 @@ describe("schemator", () => {
     }
   });
 
+  test("rewrites duplicate Markdown TypeScript refs by declaration scope", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "proposal.md");
+      await writeFile(
+        source,
+        [
+          "```ts",
+          "type Child = {",
+          "  a: string;",
+          "};",
+          "```",
+          "",
+          "```ts",
+          "type Child = {",
+          "  b: string;",
+          "};",
+          "type Parent = {",
+          "  child: Child;",
+          "};",
+          "```",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+      const parent = graph.models.find((model) => model.id === "Parent");
+      const child = parent?.fields.find((field) => field.path === "child");
+
+      expect(graph.models.map((model) => model.id)).toEqual(["Child", "Child#2", "Parent"]);
+      expect(child?.ref).toBe("Child#2");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts inherited TypeScript interface fields", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
