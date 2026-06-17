@@ -541,6 +541,40 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts unioned ordinary JSON array object fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "document.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          items: [
+            {
+              id: "a",
+            },
+            {
+              promptRecipe: "standard-v1",
+              nested: {
+                value: "x",
+              },
+            },
+          ],
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual([
+        "items",
+        "items[].id",
+        "items[].promptRecipe",
+        "items[].nested",
+        "items[].nested.value",
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("keeps nullable TypeScript model references object-like", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -739,6 +773,37 @@ describe("schemator", () => {
     };
 
     expect(() => applyAggregateToGraph(graph, aggregate)).toThrow("duplicate field path");
+  });
+
+  test("flags simplification rename collisions during aggregation", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [
+            field("recipe", "recipe", "string", false),
+            field("variant", "variant", "string", false),
+          ],
+        },
+      ],
+    };
+
+    const aggregate = aggregateReviews(graph, [
+      reviewWithoutFinalPath("recipe", "variant"),
+      {
+        ...reviewWithoutFinalPath("variant", "variant"),
+        decision: "keep",
+      },
+    ]);
+
+    expect(aggregate.ok).toBe(false);
+    expect(aggregate.findings.map((finding) => finding.message).join("\n")).toContain(
+      "duplicate field path JsonSchema.variant",
+    );
   });
 
   test("composes parent and child renames", () => {
@@ -983,6 +1048,32 @@ describe("schemator", () => {
           "type Parent = {",
           "  children: Array<Child>;",
           "  readonlyChildren: ReadonlyArray<Child>;",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+      const parent = graph.models.find((model) => model.id === "Parent");
+
+      expect(parent?.fields.map((field) => [field.path, field.objectLike, field.ref])).toEqual([
+        ["children", true, "Child"],
+        ["readonlyChildren", true, "Child"],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("recognizes spaced TypeScript generic array model references", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Child = { id: string };",
+          "type Parent = {",
+          "  children: Array< Child >;",
+          "  readonlyChildren: ReadonlyArray< Child >;",
           "};",
         ].join("\n"),
       );

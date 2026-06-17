@@ -44,7 +44,7 @@ function visitObject(
 ): void {
   for (const [name, child] of Object.entries(value)) {
     const path = parentPath ? `${parentPath}.${name}` : name;
-    const arrayItem = arrayObjectItem(child);
+    const arrayItem = arrayObjectShape(child);
     const objectLike = isRecord(child) || Boolean(arrayItem);
     fields.push({
       path,
@@ -81,10 +81,42 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function arrayObjectItem(value: unknown): Record<string, unknown> | null {
+function arrayObjectShape(value: unknown): Record<string, unknown> | null {
   if (!Array.isArray(value)) {
     return null;
   }
-  const firstObject = value.find(isRecord);
-  return firstObject ?? null;
+  const objects = value.filter(isRecord);
+  if (objects.length === 0) {
+    return null;
+  }
+  return objects.reduce<Record<string, unknown>>(
+    (shape, item) => mergeObjectShapes(shape, item),
+    {},
+  );
+}
+
+function mergeObjectShapes(left: Record<string, unknown>, right: Record<string, unknown>): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...left };
+  for (const [key, value] of Object.entries(right)) {
+    merged[key] = key in merged ? mergeShapeValue(merged[key], value) : value;
+  }
+  return merged;
+}
+
+function mergeShapeValue(left: unknown, right: unknown): unknown {
+  if (isRecord(left) && isRecord(right)) {
+    return mergeObjectShapes(left, right);
+  }
+  const leftArrayShape = arrayObjectShape(left);
+  const rightArrayShape = arrayObjectShape(right);
+  if (leftArrayShape && rightArrayShape) {
+    return [mergeObjectShapes(leftArrayShape, rightArrayShape)];
+  }
+  if (leftArrayShape) {
+    return [leftArrayShape];
+  }
+  if (rightArrayShape) {
+    return [rightArrayShape];
+  }
+  return isRecord(right) && !isRecord(left) ? right : left;
 }

@@ -1,5 +1,6 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { applyAggregateToGraph } from "./graph.js";
 import { readJson } from "./files.js";
 import type { AggregateFinding, AggregateReview, Decision, FieldReview, ModelGraph } from "./types.js";
 import { validateFieldReview } from "./validate.js";
@@ -94,10 +95,26 @@ export function aggregateReviews(graph: ModelGraph, reviews: FieldReview[]): Agg
     }
   }
 
+  const summary = summarize(reviews);
+  try {
+    applyAggregateToGraph(graph, {
+      schemaVersion: 1,
+      ok: findings.every((finding) => finding.severity !== "error"),
+      summary,
+      decisions: reviews,
+      findings,
+    });
+  } catch (error) {
+    findings.push({
+      severity: "error",
+      message: `Simplification decisions conflict: ${error instanceof Error ? error.message : String(error)}`,
+    });
+  }
+
   return {
     schemaVersion: 1,
     ok: findings.every((finding) => finding.severity !== "error"),
-    summary: summarize(reviews),
+    summary,
     decisions: reviews,
     findings,
   };
