@@ -145,6 +145,53 @@ describe("schemator", () => {
     }
   });
 
+  test("detects YAML JSON Schema documents", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.yaml");
+      await writeFile(
+        source,
+        [
+          "type: object",
+          "properties:",
+          "  promptRecipe:",
+          "    type: string",
+          "required:",
+          "  - promptRecipe",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["promptRecipe"]);
+      expect(graph.models[0]?.fields[0]?.required).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("detects Markdown YAML JSON Schema fences", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "proposal.md");
+      await writeFile(
+        source,
+        [
+          "```yaml",
+          "type: object",
+          "properties:",
+          "  promptRecipe:",
+          "    type: string",
+          "```",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["promptRecipe"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts nullable JSON Schema array item fields", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -383,6 +430,37 @@ describe("schemator", () => {
       expect(child?.objectLike).toBe(true);
       expect(child?.ref).toBe("Child");
       expect(child?.nullable).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves TypeScript model refs across Markdown fences", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "proposal.md");
+      await writeFile(
+        source,
+        [
+          "```ts",
+          "type Child = {",
+          "  id: string;",
+          "};",
+          "```",
+          "",
+          "```ts",
+          "type Parent = {",
+          "  child: Child;",
+          "};",
+          "```",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+      const parent = graph.models.find((model) => model.id === "Parent");
+      const child = parent?.fields.find((field) => field.path === "child");
+
+      expect(child?.objectLike).toBe(true);
+      expect(child?.ref).toBe("Child");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

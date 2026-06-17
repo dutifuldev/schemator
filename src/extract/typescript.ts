@@ -9,17 +9,22 @@ export function extractTypeScriptModels(
   code: string,
   sourcePath: string,
   startLine: number,
+  knownObjectModelNames: Set<string> = new Set(),
 ): ModelNode[] {
   const sourceFile = ts.createSourceFile(sourcePath, code, ts.ScriptTarget.Latest, true);
   const declarations = collectDeclarations(sourceFile);
-  const objectModelNames = new Set(
-    declarations
-      .filter((declaration) => declarationHasMembers(declaration))
-      .map((declaration) => declaration.name.text),
-  );
+  const objectModelNames = extractObjectModelNames(declarations);
+  for (const modelName of knownObjectModelNames) {
+    objectModelNames.add(modelName);
+  }
   return declarations.map((declaration) =>
     declarationToModel(declaration, sourceFile, sourcePath, startLine, objectModelNames)
   );
+}
+
+export function collectTypeScriptObjectModelNames(code: string, sourcePath: string): Set<string> {
+  const sourceFile = ts.createSourceFile(sourcePath, code, ts.ScriptTarget.Latest, true);
+  return extractObjectModelNames(collectDeclarations(sourceFile));
 }
 
 function collectDeclarations(sourceFile: ts.SourceFile): Declaration[] {
@@ -30,6 +35,14 @@ function collectDeclarations(sourceFile: ts.SourceFile): Declaration[] {
     }
   }
   return declarations;
+}
+
+function extractObjectModelNames(declarations: Declaration[]): Set<string> {
+  return new Set(
+    declarations
+      .filter((declaration) => declarationHasMembers(declaration))
+      .map((declaration) => declaration.name.text),
+  );
 }
 
 function declarationToModel(

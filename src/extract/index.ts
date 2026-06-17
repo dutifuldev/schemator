@@ -6,7 +6,7 @@ import { fencedCodeBlocks } from "../markdown.js";
 import type { ModelGraph, ModelNode, SourceSpan } from "../types.js";
 import { extractJsonSchemaModel } from "./json-schema.js";
 import { extractObjectModel, modelIdForObject } from "./object.js";
-import { extractTypeScriptModels } from "./typescript.js";
+import { collectTypeScriptObjectModelNames, extractTypeScriptModels } from "./typescript.js";
 
 export async function extractGraph(sourcePath: string): Promise<ModelGraph> {
   const text = await readText(sourcePath);
@@ -48,7 +48,7 @@ function extractDirectModels(
   }
   if (extension === ".yaml" || extension === ".yml") {
     const parsed = parseYaml(text) as unknown;
-    return [extractObjectModel(parsed, modelIdForObject(parsed, "YamlDocument"), source)];
+    return [jsonLikeToModel(parsed, "YamlDocument", source)];
   }
   return [];
 }
@@ -57,7 +57,16 @@ function extractMarkdownModels(text: string, sourcePath: string): ModelNode[] {
   const models: ModelNode[] = [];
   let jsonIndex = 0;
   let yamlIndex = 0;
-  for (const block of fencedCodeBlocks(text)) {
+  const blocks = fencedCodeBlocks(text);
+  const markdownTypeScriptModelNames = new Set<string>();
+  for (const block of blocks) {
+    if (block.language === "ts" || block.language === "typescript") {
+      for (const modelName of collectTypeScriptObjectModelNames(block.code, sourcePath)) {
+        markdownTypeScriptModelNames.add(modelName);
+      }
+    }
+  }
+  for (const block of blocks) {
     const source: SourceSpan = {
       path: sourcePath,
       span: {
@@ -66,7 +75,7 @@ function extractMarkdownModels(text: string, sourcePath: string): ModelNode[] {
       },
     };
     if (block.language === "ts" || block.language === "typescript") {
-      models.push(...extractTypeScriptModels(block.code, sourcePath, block.startLine));
+      models.push(...extractTypeScriptModels(block.code, sourcePath, block.startLine, markdownTypeScriptModelNames));
       continue;
     }
     if (block.language === "json" || block.language === "jsonc") {
@@ -80,7 +89,7 @@ function extractMarkdownModels(text: string, sourcePath: string): ModelNode[] {
     if (block.language === "yaml" || block.language === "yml") {
       const parsed = parseYaml(block.code) as unknown;
       yamlIndex += 1;
-      models.push(extractObjectModel(parsed, modelIdForObject(parsed, `YamlBlock${yamlIndex}`), source));
+      models.push(jsonLikeToModel(parsed, `YamlBlock${yamlIndex}`, source));
     }
   }
   return models.filter((model) => model.fields.length > 0);
