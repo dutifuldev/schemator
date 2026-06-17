@@ -193,6 +193,89 @@ describe("schemator", () => {
     ]);
   });
 
+  test("uses finalName when rename review omits finalPath", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [
+            field("config", "config", "object", true),
+            field("config.recipe", "recipe", "string", false),
+          ],
+        },
+      ],
+    };
+    const aggregate: AggregateReview = {
+      schemaVersion: 1,
+      ok: true,
+      summary: {
+        totalFields: 2,
+        keep: 0,
+        rename: 2,
+        merge: 0,
+        derive: 0,
+        move: 0,
+        defer: 0,
+        remove: 0,
+        opaque: 0,
+      },
+      findings: [],
+      decisions: [reviewWithoutFinalPath("config", "settings"), reviewWithoutFinalPath("config.recipe", "variant")],
+    };
+
+    expect(applyAggregateToGraph(graph, aggregate).models[0]?.fields.map((item) => item.path)).toEqual([
+      "settings",
+      "settings.variant",
+    ]);
+  });
+
+  test("removes array descendants with removed parent", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [
+            field("items", "items", "array", true),
+            field("items[].id", "id", "string", false),
+          ],
+        },
+      ],
+    };
+    const aggregate: AggregateReview = {
+      schemaVersion: 1,
+      ok: true,
+      summary: {
+        totalFields: 1,
+        keep: 0,
+        rename: 0,
+        merge: 0,
+        derive: 0,
+        move: 0,
+        defer: 0,
+        remove: 1,
+        opaque: 0,
+      },
+      findings: [],
+      decisions: [
+        {
+          ...reviewWithoutFinalPath("items", "items"),
+          decision: "remove",
+          simplestChoice: "remove",
+        },
+      ],
+    };
+
+    expect(applyAggregateToGraph(graph, aggregate).models[0]?.fields).toEqual([]);
+  });
+
   test("extracts TypeScript inline object arrays", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -254,6 +337,23 @@ function review(fieldPath: string, finalPath: string) {
     rationale: "test",
     alternatives: [finalPath],
     simplestChoice: finalPath,
+    confidence: "high" as const,
+    questions: [],
+  };
+}
+
+function reviewWithoutFinalPath(fieldPath: string, finalName: string) {
+  return {
+    schemaVersion: 1 as const,
+    model: "JsonSchema",
+    fieldPath,
+    decision: "rename" as const,
+    finalName,
+    finalType: "string",
+    required: true,
+    rationale: "test",
+    alternatives: [finalName],
+    simplestChoice: finalName,
     confidence: "high" as const,
     questions: [],
   };

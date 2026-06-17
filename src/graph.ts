@@ -1,4 +1,4 @@
-import type { AggregateReview, FieldNode, ModelGraph } from "./types.js";
+import type { AggregateReview, FieldNode, FieldReview, ModelGraph } from "./types.js";
 
 const simplifyingDecisions = new Set(["rename", "merge", "derive", "move", "defer", "remove"]);
 
@@ -20,8 +20,8 @@ export function applyAggregateToGraph(graph: ModelGraph, aggregate: AggregateRev
       const decisions = decisionsByModel.get(model.id) ?? [];
       const renameMap = new Map(
         decisions
-          .filter((decision) => decision.decision === "rename" && decision.finalPath)
-          .map((decision) => [decision.fieldPath, decision.finalPath as string]),
+          .filter((decision) => decision.decision === "rename")
+          .map((decision) => [decision.fieldPath, finalPathForRename(decision)]),
       );
       const removed = new Set(
         decisions
@@ -42,11 +42,20 @@ export function applyAggregateToGraph(graph: ModelGraph, aggregate: AggregateRev
 
 function isRemoved(path: string, removed: Set<string>): boolean {
   for (const removedPath of removed) {
-    if (path === removedPath || path.startsWith(`${removedPath}.`)) {
+    if (path === removedPath || path.startsWith(`${removedPath}.`) || path.startsWith(`${removedPath}[].`)) {
       return true;
     }
   }
   return false;
+}
+
+function finalPathForRename(decision: FieldReview): string {
+  if (decision.finalPath) {
+    return decision.finalPath;
+  }
+  const lastDot = decision.fieldPath.lastIndexOf(".");
+  const prefix = lastDot === -1 ? "" : decision.fieldPath.slice(0, lastDot + 1);
+  return `${prefix}${decision.finalName}`;
 }
 
 function applyRenames(field: FieldNode, renameMap: Map<string, string>): FieldNode {
