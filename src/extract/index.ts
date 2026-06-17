@@ -131,6 +131,7 @@ function isJsonSchema(value: unknown): value is Record<string, unknown> {
     Array.isArray(value["oneOf"]);
   const hasSchemaShape =
     hasRootSchemaKeyword ||
+    isRecord(value["properties"]) ||
     "items" in value;
   const hasOnlySchemaRootKeys = Object.keys(value).every(isSchemaRootKey);
   return (

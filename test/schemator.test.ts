@@ -1103,6 +1103,28 @@ describe("schemator", () => {
     }
   });
 
+  test("recognizes metadata-backed typeless JSON Schema properties", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          $schema: "https://json-schema.org/draft/2020-12/schema",
+          properties: {
+            foo: {},
+            bar: { description: "metadata-only child schema" },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["foo", "bar"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("does not treat ordinary JSON properties bags as JSON Schema", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
