@@ -81,7 +81,7 @@ function declarationToModel(
         new Set([id]),
       );
     }
-    addMemberGroupsFields(memberGroups, "", id, sourceFile, sourcePath, startLine, modelNames, fields, true);
+    addMemberGroupsFields(memberGroups, "", id, sourceFile, sourcePath, startLine, modelNames, fields, true, true);
   } else if (ts.isTypeAliasDeclaration(declaration)) {
     addArrayAliasFields(declaration, sourceFile, sourcePath, startLine, modelNames, fields);
   }
@@ -136,6 +136,7 @@ function addInheritedInterfaceFields(
       modelNames,
       fields,
       true,
+      false,
     );
   }
 }
@@ -319,12 +320,16 @@ function addPropertyFieldIfAbsent(
   modelNames: Set<string>,
   fields: FieldNode[],
   ancestorRequired: boolean,
+  overrideExisting: boolean,
 ): void {
   const name = propertyNameText(member.name);
   if (!name) {
     return;
   }
   const path = parentPath ? `${parentPath}.${name}` : name;
+  if (overrideExisting) {
+    removeExistingPath(fields, path);
+  }
   if (fields.some((field) => field.path === path)) {
     return;
   }
@@ -343,6 +348,7 @@ function addMemberGroupsFields(
   modelNames: Set<string>,
   fields: FieldNode[],
   ancestorRequired: boolean,
+  overrideExisting: boolean,
 ): void {
   if (memberGroups.length === 1) {
     for (const nested of memberGroups[0] ?? []) {
@@ -357,6 +363,7 @@ function addMemberGroupsFields(
           modelNames,
           fields,
           ancestorRequired,
+          overrideExisting,
         );
       }
     }
@@ -380,12 +387,15 @@ function addMemberGroupsFields(
         ))
         .filter((candidate): candidate is ts.PropertySignature => Boolean(candidate));
       const required = occurrences.length === memberGroups.length && occurrences.every((candidate) => !candidate.questionToken);
+      const path = parentPath ? `${parentPath}.${name}` : name;
+      if (overrideExisting) {
+        removeExistingPath(fields, path);
+      }
       addPropertyField(member, parentPath, modelId, sourceFile, sourcePath, startLine, modelNames, fields, {
         addNested: false,
         ancestorRequired,
         required,
       });
-      const path = parentPath ? `${parentPath}.${name}` : name;
       const allOccurrencesNonNullable = occurrences.every((candidate) =>
         candidate.type ? !typeAllowsNullish(candidate.type) : true
       );
@@ -443,7 +453,17 @@ function addTypeLiteralVariantFields(
     modelNames,
     fields,
     ancestorRequired,
+    false,
   );
+}
+
+function removeExistingPath(fields: FieldNode[], path: string): void {
+  for (let index = fields.length - 1; index >= 0; index -= 1) {
+    const existing = fields[index];
+    if (existing && (existing.path === path || existing.path.startsWith(`${path}.`) || existing.path.startsWith(`${path}[].`))) {
+      fields.splice(index, 1);
+    }
+  }
 }
 
 function propertyInlineObjectTypes(member: ts.PropertySignature): ts.TypeLiteralNode[] {

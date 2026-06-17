@@ -77,6 +77,14 @@ export function aggregateReviews(graph: ModelGraph, reviews: FieldReview[]): Agg
           message: "Object-like field needs nested field reviews or an explicit opaque decision.",
         });
       }
+      if (review.decision === "opaque" && !review.ownerBoundary?.trim()) {
+        findings.push({
+          severity: "error",
+          model: model.id,
+          fieldPath: field.path,
+          message: "Opaque review decisions require an ownerBoundary.",
+        });
+      }
     }
   }
 

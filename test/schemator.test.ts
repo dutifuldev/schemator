@@ -163,6 +163,32 @@ describe("schemator", () => {
     }
   });
 
+  test("rejects opaque reviews without owner boundaries", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [field("settings", "settings", "object", true)],
+        },
+      ],
+    };
+    const aggregate = aggregateReviews(graph, [
+      {
+        ...reviewWithoutFinalPath("settings", "settings"),
+        decision: "opaque",
+      },
+    ]);
+
+    expect(aggregate.ok).toBe(false);
+    expect(aggregate.findings.map((finding) => finding.message)).toContain(
+      "Opaque review decisions require an ownerBoundary.",
+    );
+  });
+
   test("extracts JSON Schema array item fields", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -900,6 +926,37 @@ describe("schemator", () => {
       const user = graph.models.find((model) => model.id === "User");
 
       expect(user?.fields.map((field) => field.path)).toEqual(["id", "name", "promptRecipe"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("lets TypeScript child interfaces override inherited fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "interface Base {",
+          "  value?: string;",
+          "  settings: {",
+          "    id: string;",
+          "  };",
+          "}",
+          "interface User extends Base {",
+          "  value: string;",
+          "  settings: string;",
+          "}",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+      const user = graph.models.find((model) => model.id === "User");
+
+      expect(user?.fields.map((field) => [field.path, field.type, field.required])).toEqual([
+        ["value", "string", true],
+        ["settings", "string", true],
+      ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
