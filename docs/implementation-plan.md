@@ -285,7 +285,7 @@ Recommended output directory:
     ModelProfilePolicy.promptRecipe.review.json
     ModelProfilePolicy.reasoningDefault.review.json
   aggregate.iteration-1.json
-  patch.iteration-1.diff
+  patch.iteration-1.md
   graph.iteration-2.json
   reviews.iteration-2/
   aggregate.iteration-2.json
@@ -308,15 +308,15 @@ Target command family:
 schemator extract --source schema.ts --out .schemator/graph.iteration-1.json
 schemator review --graph .schemator/graph.iteration-1.json --out .schemator/reviews.iteration-1
 schemator aggregate --graph .schemator/graph.iteration-1.json --reviews .schemator/reviews.iteration-1 --out .schemator/aggregate.iteration-1.json
-schemator apply --source schema.ts --aggregate .schemator/aggregate.iteration-1.json --out .schemator/patch.iteration-1.diff
+schemator apply --graph .schemator/graph.iteration-1.json --aggregate .schemator/aggregate.iteration-1.json --out .schemator/patch.iteration-1.md
 schemator validate --graph .schemator/graph.iteration-2.json --reviews .schemator/reviews.iteration-2
 schemator report --run .schemator --out .schemator/final-report.md
 ```
 
-Eventually add:
+V1 end-to-end run:
 
 ```bash
-schemator run --source schema.ts --requirements requirements.md --out .schemator
+schemator run --source schema.ts --out .schemator
 ```
 
 ## Agent Integration
@@ -353,6 +353,9 @@ drift.
 - Keep source editing as a patch-plan/report artifact in v1. The reducer applies
   simplifications to the normalized graph so the run can converge, but it does
   not rewrite source files yet.
+- Reject `merge` and `move` decisions during v1 aggregation. They remain part of
+  the review vocabulary, but they require a future reducer that can prove target
+  coverage and compose path rewrites safely.
 - Treat requirements verification as a future structured contract. V1 validates
   field-review coverage and convergence; human review still owns whether the
   simplified model satisfies product requirements.
