@@ -577,6 +577,32 @@ describe("schemator", () => {
     }
   });
 
+  test("marks JSON Schema enum and const null fields nullable", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          properties: {
+            maybe: { enum: [null, "enabled"] },
+            literal: { const: null },
+          },
+          required: ["maybe", "literal"],
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.nullable])).toEqual([
+        ["maybe", true],
+        ["literal", true],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("propagates JSON Schema combinator nullability to nested required fields", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -2092,7 +2118,9 @@ describe("schemator", () => {
 
       expect(graph.models[0]?.fields.map((field) => [field.path, field.objectLike, field.nullable])).toEqual([
         ["extra", true, false],
+        ["extra.additionalProperties", false, false],
         ["metadata", true, true],
+        ["metadata.additionalProperties", false, false],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -3015,6 +3043,38 @@ describe("schemator", () => {
         ["fixed", true, false],
         ["additionalProperties", true, true],
         ["additionalProperties.promptRecipe", false, false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("extracts TypeScript Record value fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Model = {",
+          "  settings: Record<string, {",
+          "    promptRecipe: string;",
+          "  }>;",
+          "  readonlySettings?: Readonly<Record<string, {",
+          "    id: string;",
+          "  }>>;",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required, field.objectLike])).toEqual([
+        ["settings", true, true],
+        ["settings.additionalProperties", true, true],
+        ["settings.additionalProperties.promptRecipe", true, false],
+        ["readonlySettings", false, true],
+        ["readonlySettings.additionalProperties", false, true],
+        ["readonlySettings.additionalProperties.id", false, false],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });

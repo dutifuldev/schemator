@@ -10,6 +10,8 @@ type JsonSchemaLike = {
   required?: unknown;
   items?: unknown;
   prefixItems?: unknown;
+  enum?: unknown;
+  const?: unknown;
   allOf?: unknown;
   anyOf?: unknown;
   oneOf?: unknown;
@@ -785,6 +787,9 @@ function schemaAllowsNull(schema: JsonSchemaLike): boolean {
   if (hasSchemaType(schema, "null")) {
     return true;
   }
+  if (schemaEnumAllowsNull(schema) || schema.const === null) {
+    return true;
+  }
   if (schemaTypes(schema.type).length > 0) {
     return false;
   }
@@ -807,6 +812,9 @@ function schemaCanAcceptNull(schema: JsonSchemaLike): boolean {
   if (hasSchemaType(schema, "null")) {
     return true;
   }
+  if (schemaEnumAllowsNull(schema) || schema.const === null) {
+    return true;
+  }
   if (schemaTypes(schema.type).length > 0) {
     return false;
   }
@@ -823,6 +831,10 @@ function schemaCanAcceptNull(schema: JsonSchemaLike): boolean {
       const candidateSchema = asSchema(candidate);
       return Boolean(candidateSchema && schemaCanAcceptNull(candidateSchema));
     });
+}
+
+function schemaEnumAllowsNull(schema: JsonSchemaLike): boolean {
+  return Array.isArray(schema.enum) && schema.enum.includes(null);
 }
 
 function schemaOrRefAllowsNull(schema: JsonSchemaLike, refSchema: ResolvedSchema | null): boolean {

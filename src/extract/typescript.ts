@@ -352,6 +352,7 @@ function addPropertyField(
       {
         objectRequired: inlineObjectDescendantRequired,
         arrayRequired: inlineArrayDescendantRequired,
+        recordRequired: descendantRequired && hasOnlyRecordObjectBranches(typeCandidates),
       },
     );
   }
@@ -772,6 +773,7 @@ function addIndexSignatureField(
     {
       objectRequired: descendantRequired && hasOnlyInlineObjectBranches(typeNodes),
       arrayRequired: descendantRequired && hasOnlyInlineArrayObjectBranches(typeNodes),
+      recordRequired: descendantRequired && hasOnlyRecordObjectBranches(typeNodes),
     },
   );
 }
@@ -805,10 +807,12 @@ function addNestedTypeFields(
     | {
       objectRequired: boolean;
       arrayRequired: boolean;
+      recordRequired: boolean;
     },
 ): void {
   const objectRequired = typeof required === "boolean" ? required && hasOnlyInlineObjectBranches(typeNodes) : required.objectRequired;
   const arrayRequired = typeof required === "boolean" ? required && hasOnlyInlineArrayObjectBranches(typeNodes) : required.arrayRequired;
+  const recordRequired = typeof required === "boolean" ? required && hasOnlyRecordObjectBranches(typeNodes) : required.recordRequired;
   const inlineObjectMemberGroups = inlineObjectMemberGroupsForTypeNodes(typeNodes);
   if (inlineObjectMemberGroups.length > 0) {
     addMemberGroupsFields(
@@ -839,6 +843,73 @@ function addNestedTypeFields(
       false,
     );
   }
+  const recordValueTypes = recordValueTypeNodesForTypeNodes(typeNodes);
+  if (recordValueTypes.length > 0) {
+    addRecordValueFields(
+      recordValueTypes,
+      path,
+      modelId,
+      sourceFile,
+      sourcePath,
+      startLine,
+      modelNames,
+      fields,
+      recordRequired,
+    );
+  }
+}
+
+function addRecordValueFields(
+  valueTypes: ts.TypeNode[],
+  parentPath: string,
+  modelId: string,
+  sourceFile: ts.SourceFile,
+  sourcePath: string,
+  startLine: number,
+  modelNames: Set<string>,
+  fields: FieldNode[],
+  ancestorRequired: boolean,
+): void {
+  const path = joinFieldPath(parentPath, "additionalProperties");
+  const typeCandidates = valueTypes.flatMap(nonNullableTypeNodes);
+  const type = uniqueStrings(valueTypes.map((candidate) => candidate.getText(sourceFile))).join(" | ");
+  const ref = referencedModelFromTypeCandidates(typeCandidates, sourceFile, modelNames) ?? referencedModel(type, modelNames);
+  const inlineObjectMemberGroups = inlineObjectMemberGroupsForTypeNodes(typeCandidates);
+  const inlineArrayObjectMemberGroups = inlineArrayObjectMemberGroupsForTypeNodes(typeCandidates);
+  const fieldNullable = valueTypes.some(typeAllowsNullish);
+  const objectLike = Boolean(ref) ||
+    inlineObjectMemberGroups.length > 0 ||
+    inlineArrayObjectMemberGroups.length > 0 ||
+    typeCandidates.some(isRecordLikeType);
+  if (!fields.some((field) => field.path === path)) {
+    fields.push({
+      path,
+      name: "additionalProperties",
+      type,
+      required: ancestorRequired,
+      nullable: fieldNullable,
+      parent: modelId,
+      objectLike,
+      source: spanForNode(valueTypes[0] as ts.Node, sourceFile, sourcePath, startLine),
+      ...(ref ? { ref } : {}),
+    });
+  }
+  const descendantRequired = ancestorRequired && !fieldNullable;
+  addNestedTypeFields(
+    typeCandidates,
+    path,
+    modelId,
+    sourceFile,
+    sourcePath,
+    startLine,
+    modelNames,
+    fields,
+    {
+      objectRequired: descendantRequired && hasOnlyInlineObjectBranches(typeCandidates),
+      arrayRequired: descendantRequired && hasOnlyInlineArrayObjectBranches(typeCandidates),
+      recordRequired: descendantRequired && hasOnlyRecordObjectBranches(typeCandidates),
+    },
+  );
 }
 
 function removeExistingPath(fields: FieldNode[], path: string): void {
@@ -893,6 +964,15 @@ function hasOnlyInlineArrayObjectBranches(typeNodes: ts.TypeNode[]): boolean {
     typeNodes.every((candidate) => {
       const element = arrayElementTypeNode(candidate);
       return Boolean(element && typeBranches(element).every(isInlineObjectBranch));
+    });
+}
+
+function hasOnlyRecordObjectBranches(typeNodes: ts.TypeNode[]): boolean {
+  return typeNodes.length > 0 &&
+    typeNodes.every((candidate) => {
+      const valueTypes = recordValueTypeNodesForTypeNode(candidate);
+      return valueTypes.length > 0 &&
+        valueTypes.every((valueType) => typeBranches(valueType).every(isInlineObjectBranch));
     });
 }
 
@@ -1002,6 +1082,31 @@ function isRecordLikeType(typeNode: ts.TypeNode): boolean {
     return isRecordLikeType(unwrapped.type);
   }
   return false;
+}
+
+function recordValueTypeNodesForTypeNodes(typeNodes: ts.TypeNode[]): ts.TypeNode[] {
+  return typeNodes.flatMap(recordValueTypeNodesForTypeNode);
+}
+
+function recordValueTypeNodesForTypeNode(typeNode: ts.TypeNode): ts.TypeNode[] {
+  const unwrapped = unwrapParenthesizedType(typeNode);
+  if (ts.isUnionTypeNode(unwrapped)) {
+    return nonNullableTypeNodes(unwrapped).flatMap(recordValueTypeNodesForTypeNode);
+  }
+  if (ts.isTypeReferenceNode(unwrapped)) {
+    const refName = typeReferenceName(unwrapped);
+    if (refName === "Record" && unwrapped.typeArguments && unwrapped.typeArguments.length >= 2) {
+      return [unwrapParenthesizedType(unwrapped.typeArguments[1] as ts.TypeNode)];
+    }
+    if (refName === "Readonly" && unwrapped.typeArguments?.length === 1) {
+      return recordValueTypeNodesForTypeNode(unwrapped.typeArguments[0] as ts.TypeNode);
+    }
+    return [];
+  }
+  if (ts.isTypeOperatorNode(unwrapped) && unwrapped.operator === ts.SyntaxKind.ReadonlyKeyword) {
+    return recordValueTypeNodesForTypeNode(unwrapped.type);
+  }
+  return [];
 }
 
 function propertyNameText(name: ts.PropertyName): string | null {
