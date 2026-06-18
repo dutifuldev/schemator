@@ -2,8 +2,17 @@ import { join } from "node:path";
 import { pathToFileNamePart, prepareGeneratedOutputDir, writeText } from "./files.js";
 import type { FieldNode, ModelGraph, ModelNode } from "./types.js";
 
+export type RunHistoryEntry = {
+  iteration: number;
+  model: string;
+  fieldPath: string;
+  decision: "rename" | "remove" | "derive" | "defer";
+  finalPath?: string;
+};
+
 export type FieldPromptOptions = {
   projectContext?: string;
+  runHistory?: RunHistoryEntry[];
 };
 
 export async function writeReviewJobs(
@@ -34,6 +43,7 @@ export function renderFieldPrompt(
     "Return only valid JSON matching `schemas/field-review.schema.json`.",
     "",
     ...projectContextSection(options.projectContext),
+    ...runHistorySection(options.runHistory),
     "## Field Under Review",
     "",
     `- Model: \`${model.id}\``,
@@ -64,6 +74,28 @@ export function renderFieldPrompt(
     "- Preserve established declarative configuration vocabulary when the project context says that vocabulary is intentional.",
     "",
   ].join("\n");
+}
+
+function runHistorySection(runHistory: RunHistoryEntry[] | undefined): string[] {
+  if (runHistory === undefined || runHistory.length === 0) {
+    return [];
+  }
+  const recentHistory = runHistory.slice(-80);
+  return [
+    "## Accepted Run Decisions",
+    "",
+    "These changes were already accepted and applied earlier in this run. Treat the current graph as canonical, avoid synonym churn, and propose another change only when new evidence makes the current shape clearly worse.",
+    "",
+    ...recentHistory.map(renderRunHistoryEntry),
+    "",
+  ];
+}
+
+function renderRunHistoryEntry(entry: RunHistoryEntry): string {
+  if (entry.decision === "rename") {
+    return `- Iteration ${entry.iteration}: \`${entry.model}.${entry.fieldPath}\` was renamed to \`${entry.finalPath ?? entry.fieldPath}\`.`;
+  }
+  return `- Iteration ${entry.iteration}: \`${entry.model}.${entry.fieldPath}\` was accepted as \`${entry.decision}\`.`;
 }
 
 function projectContextSection(projectContext: string | undefined): string[] {

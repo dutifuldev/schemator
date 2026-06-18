@@ -8,8 +8,14 @@ import { renderPatchPlan } from "./apply.js";
 import { writeCodexReviews } from "./codex-review.js";
 import { extractGraph } from "./extract/index.js";
 import { readJson, readText, resolvePath, writeJson, writeText } from "./files.js";
-import { applyAggregateToGraph, hasSimplification } from "./graph.js";
-import { writeReviewJobs } from "./jobs.js";
+import {
+  applyAggregateToGraph,
+  graphDecisionKey,
+  hasSimplification,
+  reduceAggregateGraph,
+  type GraphReduction,
+} from "./graph.js";
+import { writeReviewJobs, type FieldPromptOptions, type RunHistoryEntry } from "./jobs.js";
 import { renderReport } from "./report.js";
 import { writeDeterministicReviews } from "./review.js";
 import type { AggregateReview, ModelGraph } from "./types.js";
@@ -186,6 +192,9 @@ program
       let lastAggregate: AggregateReview | null = null;
       let invalidAggregate: AggregateReview | null = null;
       const aggregates: AggregateReview[] = [];
+      const runHistory: RunHistoryEntry[] = [];
+      const frozenRenamePaths = new Set<string>();
+      let lastReduction: GraphReduction | null = null;
       let stableIteration = 0;
 
       for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
@@ -193,17 +202,19 @@ program
         const reviewsDir = join(out, `reviews.iteration-${iteration}`);
         const jobsDir = join(out, `jobs.iteration-${iteration}`);
         const aggregatePath = join(out, `aggregate.iteration-${iteration}.json`);
+        const reductionPath = join(out, `reduction.iteration-${iteration}.json`);
         await writeJson(graphPath, graph);
-        await writeReviewJobs(graph, jobsDir, reviewContextOptions(projectContext));
+        const reviewOptions = reviewContextOptions(projectContext, runHistory);
+        await writeReviewJobs(graph, jobsDir, reviewOptions);
         if (options.strategy === "codex") {
           await writeCodexReviews(graph, reviewsDir, {
             ...codexOptions(options),
-            ...reviewContextOptions(projectContext),
+            ...reviewOptions,
           });
         } else if (options.strategy === "local") {
           await writeDeterministicReviews(graph, reviewsDir, {
             strategy: "local",
-            ...reviewContextOptions(projectContext),
+            ...reviewOptions,
           });
         } else {
           unsupportedStrategy(options.strategy);
@@ -219,10 +230,14 @@ program
           invalidAggregate = aggregate;
           break;
         }
-        if (!hasSimplification(aggregate)) {
+        const reduction = reduceAggregateGraph(graph, aggregate, { frozenRenamePaths });
+        lastReduction = reduction;
+        await writeJson(reductionPath, reductionArtifact(reduction));
+        if (!reduction.changed) {
           break;
         }
-        graph = applyAggregateToGraph(graph, aggregate);
+        recordRunHistory(iteration, reduction, runHistory, frozenRenamePaths);
+        graph = reduction.graph;
       }
 
       await writeJson(join(out, "graph.final.json"), graph);
@@ -236,7 +251,7 @@ program
             schemaVersion: 1,
             source,
             stableIteration,
-            stable: lastAggregate ? lastAggregate.ok && !hasSimplification(lastAggregate) : false,
+            stable: lastAggregate ? lastAggregate.ok && lastReduction !== null && !lastReduction.changed : false,
             finalGraph: "graph.final.json",
             finalReport: "final-report.md",
             ...(projectContext !== undefined
@@ -255,7 +270,7 @@ program
           `aggregate validation failed at iteration ${stableIteration}: ${invalidAggregate.findings.map((finding) => finding.message).join("; ")}`,
         );
       }
-      if (lastAggregate && hasSimplification(lastAggregate)) {
+      if (lastAggregate?.ok && lastReduction?.changed) {
         throw new Error(`run stopped before convergence after ${stableIteration} iteration(s)`);
       }
     });
@@ -318,8 +333,14 @@ async function readProjectContext(path: string | undefined): Promise<string | un
   }
 }
 
-function reviewContextOptions(projectContext: string | undefined): { projectContext?: string } {
-  return projectContext === undefined ? {} : { projectContext };
+function reviewContextOptions(
+  projectContext: string | undefined,
+  runHistory: RunHistoryEntry[] = [],
+): FieldPromptOptions {
+  return {
+    ...(projectContext === undefined ? {} : { projectContext }),
+    ...(runHistory.length === 0 ? {} : { runHistory }),
+  };
 }
 
 function sha256(value: string): string {
@@ -398,6 +419,34 @@ function deriveFinalGraph(graph: ModelGraph, aggregates: AggregateReview[]): Mod
     next = applyAggregateToGraph(next, aggregate);
   }
   return next;
+}
+
+function recordRunHistory(
+  iteration: number,
+  reduction: GraphReduction,
+  runHistory: RunHistoryEntry[],
+  frozenRenamePaths: Set<string>,
+): void {
+  for (const applied of reduction.applied) {
+    runHistory.push({
+      iteration,
+      model: applied.model,
+      fieldPath: applied.fieldPath,
+      decision: applied.decision,
+      ...(applied.finalPath === undefined ? {} : { finalPath: applied.finalPath }),
+    });
+    if (applied.decision === "rename" && applied.finalPath !== undefined) {
+      frozenRenamePaths.add(graphDecisionKey(applied.model, applied.finalPath));
+    }
+  }
+}
+
+function reductionArtifact(reduction: GraphReduction): Omit<GraphReduction, "graph"> {
+  return {
+    changed: reduction.changed,
+    applied: reduction.applied,
+    skipped: reduction.skipped,
+  };
 }
 
 function emptySummary(): AggregateReview["summary"] {

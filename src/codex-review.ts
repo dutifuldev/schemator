@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pathToFileNamePart, prepareGeneratedOutputDir, writeJson } from "./files.js";
-import { renderFieldPrompt } from "./jobs.js";
+import { renderFieldPrompt, type RunHistoryEntry } from "./jobs.js";
 import type { FieldReview, ModelGraph } from "./types.js";
 import { validateFieldReview } from "./validate.js";
 
@@ -12,6 +12,7 @@ export type CodexReviewOptions = {
   cwd?: string;
   timeoutMs?: number;
   projectContext?: string;
+  runHistory?: RunHistoryEntry[];
 };
 
 export async function writeCodexReviews(
@@ -27,7 +28,10 @@ export async function writeCodexReviews(
         graph,
         model,
         field,
-        options.projectContext === undefined ? {} : { projectContext: options.projectContext },
+        {
+          ...(options.projectContext === undefined ? {} : { projectContext: options.projectContext }),
+          ...(options.runHistory === undefined ? {} : { runHistory: options.runHistory }),
+        },
       );
       const review = bindReviewIdentity(await runCodexFieldReview(prompt, options), model.id, field.path);
       const validation = validateFieldReview(review);
