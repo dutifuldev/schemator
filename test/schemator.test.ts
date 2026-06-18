@@ -4472,6 +4472,54 @@ describe("schemator", () => {
     ]);
   });
 
+  test("rewrites only direct child names in parent type text", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [
+            field("config", "config", "{ recipe: string; nested: { recipe: string } }", true),
+            field("config.recipe", "recipe", "string", false),
+            field("config.nested", "nested", "{ recipe: string }", true),
+            field("config.nested.recipe", "recipe", "string", false),
+          ],
+        },
+      ],
+    };
+    const aggregate: AggregateReview = {
+      schemaVersion: 1,
+      ok: true,
+      summary: {
+        totalFields: 4,
+        keep: 3,
+        rename: 1,
+        merge: 0,
+        derive: 0,
+        move: 0,
+        defer: 0,
+        remove: 0,
+        opaque: 0,
+      },
+      findings: [],
+      decisions: [
+        review("config.recipe", "config.variant"),
+      ],
+    };
+
+    const fields = applyAggregateToGraph(graph, aggregate).models[0]?.fields ?? [];
+
+    expect(fields.map((item) => [item.path, item.type])).toEqual([
+      ["config", "{ variant: string; nested: { recipe: string } }"],
+      ["config.variant", "string"],
+      ["config.nested", "{ recipe: string }"],
+      ["config.nested.recipe", "string"],
+    ]);
+  });
+
   test("preserves escaped field names when applying unrelated renames", () => {
     const graph: ModelGraph = {
       schemaVersion: 1,

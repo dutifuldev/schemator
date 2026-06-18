@@ -138,33 +138,79 @@ function applyRenameMapToTypeText(
 ): string {
   let next = type;
   for (const [from, to] of renameMap) {
-    if (!isDescendantPath(from, fieldPath)) {
+    if (!isDirectTypeChildPath(from, fieldPath)) {
       continue;
     }
     const oldName = unescapeFieldPathSegment(lastPathSegment(from));
     const newName = renameNames.get(from) ?? unescapeFieldPathSegment(lastPathSegment(to));
-    next = replaceTypePropertyName(next, oldName, newName);
+    next = replaceDirectTypePropertyName(next, oldName, newName);
   }
   return next;
 }
 
-function isDescendantPath(path: string, parent: string): boolean {
-  return path.startsWith(`${parent}.`) || path.startsWith(`${parent}[].`);
+function isDirectTypeChildPath(path: string, parent: string): boolean {
+  const pathParent = parentFieldPath(path);
+  return pathParent === parent || pathParent === `${parent}[]`;
 }
 
-function replaceTypePropertyName(type: string, oldName: string, newName: string): string {
+function replaceDirectTypePropertyName(type: string, oldName: string, newName: string): string {
   const identifier = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
   if (!identifier.test(oldName) || !identifier.test(newName)) {
     return type;
   }
-  return type.replace(
-    new RegExp(`(^|[\\s{;,])${escapeRegExp(oldName)}(\\??\\s*:)`, "g"),
-    `$1${newName}$2`,
-  );
+  let next = "";
+  let cursor = 0;
+  let braceDepth = 0;
+  let quote: string | null = null;
+  for (let index = 0; index < type.length; index += 1) {
+    const char = type[index];
+    if (quote) {
+      if (char === "\\" && index + 1 < type.length) {
+        index += 1;
+      } else if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (char === "'" || char === "\"" || char === "`") {
+      quote = char;
+      continue;
+    }
+    if (char === "{") {
+      braceDepth += 1;
+      continue;
+    }
+    if (char === "}") {
+      braceDepth = Math.max(0, braceDepth - 1);
+      continue;
+    }
+    if (
+      braceDepth === 1 &&
+      type.startsWith(oldName, index) &&
+      hasPropertyNameBoundaryBefore(type, index) &&
+      propertyNameEndIndex(type, index + oldName.length) !== null
+    ) {
+      next += `${type.slice(cursor, index)}${newName}`;
+      index += oldName.length - 1;
+      cursor = index + 1;
+    }
+  }
+  return cursor === 0 ? type : `${next}${type.slice(cursor)}`;
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function hasPropertyNameBoundaryBefore(type: string, index: number): boolean {
+  return index === 0 || /[\s{;,]/.test(type[index - 1] ?? "");
+}
+
+function propertyNameEndIndex(type: string, index: number): number | null {
+  let cursor = index;
+  if (type[cursor] === "?") {
+    cursor += 1;
+  }
+  while (/\s/.test(type[cursor] ?? "")) {
+    cursor += 1;
+  }
+  return type[cursor] === ":" ? cursor : null;
 }
 
 function unescapeFieldPathSegment(segment: string): string {
