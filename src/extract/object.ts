@@ -314,7 +314,7 @@ function pathFactsForObjects(
       const arrayShape = arrayObjectShape(value, seenObjects);
       if (arrayShape) {
         const arrayValues = presentValues.filter(Array.isArray);
-        if (arrayValues.length !== presentValues.length) {
+        if (arrayValues.length !== presentValues.length || arrayValues.some(hasNonObjectArrayItems)) {
           for (const descendant of descendantPaths(arrayShape.value, `${path}[]`, seenObjects)) {
             optionalPaths.add(descendant);
           }
@@ -364,6 +364,10 @@ function descendantPaths(value: unknown, parentPath: string, seenObjects: WeakSe
     }
   }
   return paths;
+}
+
+function hasNonObjectArrayItems(value: unknown[]): boolean {
+  return !value.some(isRecord) || value.some((item) => !isRecord(item));
 }
 
 function prefixPaths(paths: Set<string>, prefix: string): Set<string> {

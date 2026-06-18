@@ -2438,6 +2438,46 @@ describe("schemator", () => {
     }
   });
 
+  test("marks ordinary JSON array descendants optional when array samples contain scalars", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "document.json");
+      await writeFile(
+        source,
+        JSON.stringify([
+          {
+            items: [
+              {
+                id: 1,
+              },
+            ],
+            mixed: [
+              {
+                value: "x",
+              },
+              "loose",
+            ],
+          },
+          {
+            items: ["loose"],
+            mixed: [],
+          },
+        ]),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
+        ["items", true],
+        ["items[].items", true],
+        ["items[].items[].id", false],
+        ["items[].mixed", true],
+        ["items[].mixed[].value", false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("marks escaped ordinary JSON array descendants optional", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
