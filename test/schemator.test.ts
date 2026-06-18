@@ -1021,6 +1021,39 @@ describe("schemator", () => {
     }
   });
 
+  test("merges JSON Schema alternative field types", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          anyOf: [
+            {
+              type: "object",
+              properties: {
+                value: { type: "string" },
+              },
+            },
+            {
+              type: "object",
+              properties: {
+                value: { type: "number" },
+              },
+            },
+          ],
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.type])).toEqual([
+        ["value", "string | number"],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("propagates JSON Schema allOf required fields across branches", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -1975,6 +2008,35 @@ describe("schemator", () => {
         ["items", true, false],
         ["items[].nested", true, true],
         ["items[].nested.value", false, false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves scalar alternatives in ordinary JSON array object fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "document.json");
+      await writeFile(
+        source,
+        JSON.stringify([
+          {
+            maybe: null,
+            value: "a",
+          },
+          {
+            maybe: "x",
+            value: 1,
+          },
+        ]),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.type, field.nullable])).toEqual([
+        ["items", "array", false],
+        ["items[].maybe", "string", true],
+        ["items[].value", "number | string", false],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });

@@ -449,12 +449,21 @@ function addField(fields: FieldNode[], field: FieldNode): void {
     fields.push(field);
     return;
   }
+  existing.type = mergeType(existing.type, field.type);
   existing.required = existing.required || field.required;
   existing.nullable = existing.nullable || field.nullable;
   existing.objectLike = existing.objectLike || field.objectLike;
   if (!existing.ref && field.ref) {
     existing.ref = field.ref;
   }
+}
+
+function mergeType(left: string, right: string): string {
+  return uniqueStrings([...left.split(" | "), ...right.split(" | ")]).join(" | ");
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
 function visitItemSchemas(

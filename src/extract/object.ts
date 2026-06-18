@@ -7,6 +7,12 @@ type ObjectShape = {
   nullablePaths: Set<string>;
 };
 
+const mixedScalarTypes = Symbol("schemator.mixedScalarTypes");
+
+type MixedScalarShape = {
+  [mixedScalarTypes]: Set<string>;
+};
+
 export function extractObjectModel(value: unknown, modelId: string, source: SourceSpan): ModelNode {
   const fields: FieldNode[] = [];
   const seenObjects = new WeakSet<object>();
@@ -117,6 +123,9 @@ function visitObject(
 }
 
 function valueType(value: unknown): string {
+  if (isMixedScalarShape(value)) {
+    return [...value[mixedScalarTypes]].sort().join(" | ") || "null";
+  }
   if (value === null) {
     return "null";
   }
@@ -130,7 +139,7 @@ function valueType(value: unknown): string {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !Array.isArray(value) && !isMixedScalarShape(value);
 }
 
 function arrayObjectShape(value: unknown, seenObjects: WeakSet<object> = new WeakSet()): ObjectShape | null {
@@ -188,6 +197,12 @@ function mergeObjectShapes(
 }
 
 function mergeShapeValue(left: unknown, right: unknown, seenObjects: WeakSet<object>): unknown {
+  const scalarTypes = mergeScalarTypes(left, right);
+  if (scalarTypes) {
+    return {
+      [mixedScalarTypes]: scalarTypes,
+    } satisfies MixedScalarShape;
+  }
   if (isRecord(left) && isRecord(right)) {
     return mergeObjectShapes(left, right, seenObjects);
   }
@@ -203,6 +218,32 @@ function mergeShapeValue(left: unknown, right: unknown, seenObjects: WeakSet<obj
     return [rightArrayShape.value];
   }
   return isRecord(right) && !isRecord(left) ? right : left;
+}
+
+function mergeScalarTypes(left: unknown, right: unknown): Set<string> | null {
+  const leftTypes = scalarTypesForValue(left);
+  const rightTypes = scalarTypesForValue(right);
+  if (!leftTypes || !rightTypes) {
+    return null;
+  }
+  return new Set([...leftTypes, ...rightTypes]);
+}
+
+function scalarTypesForValue(value: unknown): Set<string> | null {
+  if (isMixedScalarShape(value)) {
+    return value[mixedScalarTypes];
+  }
+  if (value === null) {
+    return new Set();
+  }
+  if (Array.isArray(value) || isRecord(value)) {
+    return null;
+  }
+  return new Set([typeof value]);
+}
+
+function isMixedScalarShape(value: unknown): value is MixedScalarShape {
+  return typeof value === "object" && value !== null && mixedScalarTypes in value;
 }
 
 function pathFactsForObjects(
