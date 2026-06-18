@@ -5088,6 +5088,51 @@ describe("schemator", () => {
     });
   });
 
+  test("records actual final paths for chained applied renames", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [
+            field("a", "a", "string", false),
+            field("b", "b", "string", false),
+          ],
+        },
+      ],
+    };
+    const aggregate: AggregateReview = {
+      schemaVersion: 1,
+      ok: true,
+      summary: {
+        totalFields: 2,
+        keep: 0,
+        rename: 2,
+        merge: 0,
+        derive: 0,
+        move: 0,
+        defer: 0,
+        remove: 0,
+        opaque: 0,
+      },
+      findings: [],
+      decisions: [review("b", "c"), review("a", "b")],
+    };
+
+    const reduction = reduceAggregateGraph(graph, aggregate);
+
+    expect(reduction.graph.models[0]?.fields.map((item) => item.path)).toEqual(["b", "c"]);
+    expect(reduction.applied).toContainEqual({
+      decision: "rename",
+      model: "JsonSchema",
+      fieldPath: "a",
+      finalPath: "b",
+    });
+  });
+
   test("rewrites only direct child names in parent type text", () => {
     const graph: ModelGraph = {
       schemaVersion: 1,

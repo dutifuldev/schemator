@@ -99,7 +99,7 @@ export function reduceAggregateGraph(
           decision: "rename",
           model: model.id,
           fieldPath,
-          finalPath: applyRenameMapToPath(finalPath, renameMap),
+          finalPath: applyRenameMapToPath(fieldPath, renameMap),
         });
       }
       const renameNames = applicableRenameNames(decisions, renameMap);
