@@ -242,12 +242,18 @@ function isJsonSchema(value: unknown): value is Record<string, unknown> {
     return false;
   }
   const hasSchemaMetadata = typeof value["$schema"] === "string" || typeof value["$id"] === "string";
+  const hasAdditionalPropertiesApplicator =
+    typeof value["additionalProperties"] === "boolean" || isSchemaProperty(value["additionalProperties"]);
+  const hasItemsApplicator =
+    isSchemaProperty(value["items"]) || (Array.isArray(value["items"]) && value["items"].some(isSchemaProperty));
   const hasRootSchemaKeyword =
     typeof value["$ref"] === "string" ||
     isSchemaType(value["type"]) ||
     isRecord(value["$defs"]) ||
     isRecord(value["definitions"]) ||
     isRecord(value["patternProperties"]) ||
+    hasAdditionalPropertiesApplicator ||
+    hasItemsApplicator ||
     Array.isArray(value["prefixItems"]) ||
     Array.isArray(value["allOf"]) ||
     Array.isArray(value["anyOf"]) ||
@@ -256,6 +262,7 @@ function isJsonSchema(value: unknown): value is Record<string, unknown> {
     hasRootSchemaKeyword ||
     isRecord(value["properties"]) ||
     isRecord(value["patternProperties"]) ||
+    "additionalProperties" in value ||
     "prefixItems" in value ||
     "items" in value;
   const hasOnlySchemaRootKeys = Object.keys(value).every(isSchemaRootKey);

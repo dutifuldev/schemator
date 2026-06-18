@@ -458,6 +458,27 @@ describe("schemator", () => {
     }
   });
 
+  test("detects metadata-backed root JSON Schema map values without explicit type", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          $schema: "https://json-schema.org/draft/2020-12/schema",
+          additionalProperties: { type: "string" },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.type, field.objectLike])).toEqual([
+        ["additionalProperties", "string", false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts permissive JSON Schema map values", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -866,6 +887,34 @@ describe("schemator", () => {
       expect(graph.models[0]?.fields.map((field) => [field.path, field.type, field.objectLike])).toEqual([
         ["items", "array", true],
         ["items[].id", "string", false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("detects root JSON Schema arrays without explicit type", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+            },
+            required: ["id"],
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.kind).toBe("array");
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required, field.objectLike])).toEqual([
+        ["items", true, true],
+        ["items[].id", true, false],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
