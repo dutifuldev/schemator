@@ -3133,6 +3133,38 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts TypeScript tuple object fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Child = {",
+          "  name: string;",
+          "};",
+          "type Cart = {",
+          "  items: [{ id: string }];",
+          "  children: [Child];",
+          "  named: [item: { sku: string }];",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+      const cart = graph.models.find((model) => model.id === "Cart");
+
+      expect(cart?.fields.map((field) => [field.path, field.required, field.objectLike, field.ref ?? null])).toEqual([
+        ["items", true, true, null],
+        ["items[].id", true, false, null],
+        ["children", true, true, "Child"],
+        ["named", true, true, null],
+        ["named[].sku", true, false, null],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts readonly TypeScript inline object arrays", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -3297,6 +3329,29 @@ describe("schemator", () => {
         ["fixed", true, false],
         ["additionalProperties", true, true],
         ["additionalProperties.promptRecipe", false, false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("marks TypeScript union index signatures nullable when any branch is nullable", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Bag =",
+          "  | { [key: string]: { id: string } }",
+          "  | { [key: string]: { id: string } | null };",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required, field.nullable])).toEqual([
+        ["additionalProperties", true, true],
+        ["additionalProperties.id", false, false],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });

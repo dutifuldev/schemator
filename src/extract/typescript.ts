@@ -718,6 +718,7 @@ function addUnionIndexSignatureField(
     {
       ancestorRequired: options.ancestorRequired,
       required: options.required,
+      nullable: occurrences.some((candidate) => typeAllowsNullish(candidate.type)),
       typeOverride: uniqueStrings(occurrences.map((candidate) => candidate.type.getText(sourceFile))).join(" | "),
       typeNodesOverride: occurrences.flatMap((candidate) => nonNullableTypeNodes(candidate.type)),
     },
@@ -738,6 +739,7 @@ function addIndexSignatureField(
     required: boolean;
     typeOverride?: string;
     typeNodesOverride?: ts.TypeNode[];
+    nullable?: boolean;
   },
 ): void {
   const path = joinFieldPath(parentPath, "additionalProperties");
@@ -746,7 +748,7 @@ function addIndexSignatureField(
   const type = options.typeOverride ?? typeNode.getText(sourceFile);
   const ref = referencedModelFromTypeCandidates(typeNodes, sourceFile, modelNames) ?? referencedModel(type, modelNames);
   const fieldRequired = options.required && options.ancestorRequired;
-  const fieldNullable = typeAllowsNullish(typeNode);
+  const fieldNullable = options.nullable ?? typeAllowsNullish(typeNode);
   const objectLike = Boolean(ref) || hasObjectLikeBoundary(typeNodes);
   fields.push({
     path,
@@ -939,7 +941,7 @@ function inlineArrayObjectMemberGroupsForTypeNodes(
   typeNodes: ts.TypeNode[],
 ): ReadonlyArray<ReadonlyArray<ts.TypeElement>> {
   return typeNodes
-    .map(arrayElementTypeNode)
+    .flatMap(arrayElementTypeNodes)
     .flatMap((candidate) => candidate ? inlineObjectMemberGroupsForTypeNodes(nonNullableTypeNodes(candidate)) : []);
 }
 
@@ -968,8 +970,8 @@ function hasOnlyInlineObjectBranches(typeNodes: ts.TypeNode[]): boolean {
 function hasOnlyInlineArrayObjectBranches(typeNodes: ts.TypeNode[]): boolean {
   return typeNodes.length > 0 &&
     typeNodes.every((candidate) => {
-      const element = arrayElementTypeNode(candidate);
-      return Boolean(element && typeBranches(element).every(isInlineObjectBranch));
+      const elements = arrayElementTypeNodes(candidate);
+      return elements.length > 0 && elements.every((element) => typeBranches(element).every(isInlineObjectBranch));
     });
 }
 
@@ -1213,6 +1215,9 @@ function arrayElementTypeNodes(typeNode: ts.TypeNode): ts.TypeNode[] {
   if (ts.isArrayTypeNode(unwrapped)) {
     return [unwrapParenthesizedType(unwrapped.elementType)];
   }
+  if (ts.isTupleTypeNode(unwrapped)) {
+    return unwrapped.elements.map(tupleElementTypeNode);
+  }
   if (!ts.isTypeReferenceNode(unwrapped) || !unwrapped.typeArguments || unwrapped.typeArguments.length !== 1) {
     return [];
   }
@@ -1221,6 +1226,19 @@ function arrayElementTypeNodes(typeNode: ts.TypeNode): ts.TypeNode[] {
     return [];
   }
   return [unwrapParenthesizedType(unwrapped.typeArguments[0] as ts.TypeNode)];
+}
+
+function tupleElementTypeNode(element: ts.TypeNode): ts.TypeNode {
+  if (ts.isNamedTupleMember(element)) {
+    return unwrapParenthesizedType(element.type);
+  }
+  if (ts.isOptionalTypeNode(element)) {
+    return unwrapParenthesizedType(element.type);
+  }
+  if (ts.isRestTypeNode(element)) {
+    return unwrapParenthesizedType(element.type);
+  }
+  return unwrapParenthesizedType(element);
 }
 
 function referencedModel(typeText: string, modelNames: Set<string>): string | null {
@@ -1266,8 +1284,7 @@ function referencedModelFromTypeCandidates(
     if (ref) {
       return ref;
     }
-    const arrayElement = arrayElementTypeNode(candidate);
-    if (arrayElement) {
+    for (const arrayElement of arrayElementTypeNodes(candidate)) {
       const arrayRef = referencedModelFromTypeCandidates(nonNullableTypeNodes(arrayElement), sourceFile, modelNames);
       if (arrayRef) {
         return arrayRef;
