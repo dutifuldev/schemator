@@ -11,6 +11,7 @@ export type CodexReviewOptions = {
   model?: string;
   cwd?: string;
   timeoutMs?: number;
+  concurrency?: number;
   projectContext?: string;
   runHistory?: RunHistoryEntry[];
 };
@@ -21,28 +22,45 @@ export async function writeCodexReviews(
   options: CodexReviewOptions = {},
 ): Promise<FieldReview[]> {
   await prepareGeneratedOutputDir(outputDir, ".review.json");
-  const reviews: FieldReview[] = [];
-  for (const model of graph.models) {
-    for (const field of model.fields) {
-      const prompt = renderFieldPrompt(
-        graph,
-        model,
-        field,
-        {
-          ...(options.projectContext === undefined ? {} : { projectContext: options.projectContext }),
-          ...(options.runHistory === undefined ? {} : { runHistory: options.runHistory }),
-        },
-      );
-      const review = bindReviewIdentity(await runCodexFieldReview(prompt, options), model.id, field.path);
-      const validation = validateFieldReview(review);
-      if (!validation.ok) {
-        throw new Error(
-          `Codex review for ${model.id}.${field.path} is invalid:\n${validation.errors.join("\n")}`,
+  const jobs = graph.models.flatMap((model) => model.fields.map((field) => ({ model, field })));
+  const reviews = new Array<FieldReview>(jobs.length);
+  let cursor = 0;
+  const workerCount = Math.min(Math.max(1, options.concurrency ?? 4), Math.max(1, jobs.length));
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (cursor < jobs.length) {
+        const index = cursor;
+        cursor += 1;
+        const job = jobs[index];
+        if (!job) {
+          continue;
+        }
+        const { model, field } = job;
+        const prompt = renderFieldPrompt(
+          graph,
+          model,
+          field,
+          {
+            ...(options.projectContext === undefined ? {} : { projectContext: options.projectContext }),
+            ...(options.runHistory === undefined ? {} : { runHistory: options.runHistory }),
+          },
         );
+        const review = bindReviewIdentity(await runCodexFieldReview(prompt, options), model.id, field.path);
+        const validation = validateFieldReview(review);
+        if (!validation.ok) {
+          throw new Error(
+            `Codex review for ${model.id}.${field.path} is invalid:\n${validation.errors.join("\n")}`,
+          );
+        }
+        reviews[index] = review;
+        const fileName = `${pathToFileNamePart(model.id)}.${pathToFileNamePart(field.path)}.review.json`;
+        await writeJson(join(outputDir, fileName), review);
       }
-      reviews.push(review);
-      const fileName = `${pathToFileNamePart(model.id)}.${pathToFileNamePart(field.path)}.review.json`;
-      await writeJson(join(outputDir, fileName), review);
+    }),
+  );
+  for (const review of reviews) {
+    if (!review) {
+      throw new Error("Codex review worker finished without writing every review.");
     }
   }
   return reviews;

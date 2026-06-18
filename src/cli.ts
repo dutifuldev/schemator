@@ -66,6 +66,7 @@ program
   .option("--codex-command <path>", "Codex executable for --strategy codex", "codex")
   .option("--codex-model <name>", "Codex model for --strategy codex")
   .option("--codex-timeout-ms <n>", "per-field Codex timeout in milliseconds", "120000")
+  .option("--codex-concurrency <n>", "maximum concurrent Codex reviewers", "4")
   .action(async (options: ReviewCommandOptions) => {
     await runCommand(async () => {
       const graph = assertModelGraph(await readJson(resolvePath(options.graph)));
@@ -174,6 +175,7 @@ program
   .option("--codex-command <path>", "Codex executable for --strategy codex", "codex")
   .option("--codex-model <name>", "Codex model for --strategy codex")
   .option("--codex-timeout-ms <n>", "per-field Codex timeout in milliseconds", "120000")
+  .option("--codex-concurrency <n>", "maximum concurrent Codex reviewers", "4")
   .action(async (options: RunCommandOptions) => {
     await runCommand(async () => {
       const source = resolvePath(options.source);
@@ -287,6 +289,7 @@ type ReviewCommandOptions = {
   codexCommand: string;
   codexModel?: string;
   codexTimeoutMs: string;
+  codexConcurrency: string;
 };
 
 type RunCommandOptions = {
@@ -298,21 +301,30 @@ type RunCommandOptions = {
   codexCommand: string;
   codexModel?: string;
   codexTimeoutMs: string;
+  codexConcurrency: string;
 };
 
-function codexOptions(options: Pick<ReviewCommandOptions, "codexCommand" | "codexModel" | "codexTimeoutMs">): {
+function codexOptions(
+  options: Pick<ReviewCommandOptions, "codexCommand" | "codexModel" | "codexTimeoutMs" | "codexConcurrency">,
+): {
   command: string;
   model?: string;
   timeoutMs: number;
+  concurrency: number;
 } {
   const timeoutMs = Number.parseInt(options.codexTimeoutMs, 10);
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
     throw new Error("--codex-timeout-ms must be a positive integer");
   }
+  const concurrency = Number.parseInt(options.codexConcurrency, 10);
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    throw new Error("--codex-concurrency must be a positive integer");
+  }
   return {
     command: options.codexCommand,
     ...(options.codexModel ? { model: options.codexModel } : {}),
     timeoutMs,
+    concurrency,
   };
 }
 
