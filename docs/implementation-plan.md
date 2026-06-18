@@ -21,6 +21,11 @@ covers the stated requirements.
 
 Do not rely on an agent to remember every nested field.
 
+Schemator should push reviewers toward a Lindy data model: names and stored
+facts that are boring, durable, and likely to remain the same for the next ten
+or a hundred years. The goal is not clever modeling language; it is the smallest
+schema whose concepts can survive product, provider, and implementation churn.
+
 The extractor must enumerate the model graph. Every field, nested field, column,
 selector key, policy key, JSON Schema property, SQL column, and object-like
 subfield must become an explicit review item or an explicit opaque exemption.
@@ -153,12 +158,19 @@ Spawn one independent review run per added or changed field/column.
 
 Each sub-run receives:
 
+- project and task context when provided;
 - model purpose;
 - current required use cases;
 - the full current schema for context;
 - the normalized field graph;
 - exactly one field or column under review;
 - naming conventions and minimum viable schema rules.
+
+Project/task context is a first-class review input, not a hardcoded rule list.
+It can explain the product, target users, durable domain vocabulary, examples
+versus canonical schema boundaries, long-term automation goals, and missing
+semantics reviewers should ask about. It must be passed to every independent
+field reviewer so decisions are not made from bare field names alone.
 
 Each sub-run must return structured JSON:
 
@@ -274,13 +286,14 @@ Recommended output directory:
 
 ```text
 .schemator/
-  requirements.md
+  project-context.md
   graph.iteration-1.json
+  jobs.iteration-1/
   reviews.iteration-1/
     ModelProfilePolicy.promptRecipe.review.json
     ModelProfilePolicy.reasoningDefault.review.json
   aggregate.iteration-1.json
-  patch.iteration-1.diff
+  patch.iteration-1.md
   graph.iteration-2.json
   reviews.iteration-2/
   aggregate.iteration-2.json
@@ -301,17 +314,18 @@ Target command family:
 
 ```bash
 schemator extract --source schema.ts --out .schemator/graph.iteration-1.json
-schemator review --graph .schemator/graph.iteration-1.json --out .schemator/reviews.iteration-1
+schemator create-jobs --graph .schemator/graph.iteration-1.json --context project-context.md --out .schemator/jobs.iteration-1
+schemator review --graph .schemator/graph.iteration-1.json --context project-context.md --out .schemator/reviews.iteration-1
 schemator aggregate --graph .schemator/graph.iteration-1.json --reviews .schemator/reviews.iteration-1 --out .schemator/aggregate.iteration-1.json
-schemator apply --source schema.ts --aggregate .schemator/aggregate.iteration-1.json --out .schemator/patch.iteration-1.diff
+schemator apply --graph .schemator/graph.iteration-1.json --aggregate .schemator/aggregate.iteration-1.json --out .schemator/patch.iteration-1.md
 schemator validate --graph .schemator/graph.iteration-2.json --reviews .schemator/reviews.iteration-2
 schemator report --run .schemator --out .schemator/final-report.md
 ```
 
-Eventually add:
+V1 end-to-end run:
 
 ```bash
-schemator run --source schema.ts --requirements requirements.md --out .schemator
+schemator run --source schema.ts --context project-context.md --out .schemator
 ```
 
 ## Agent Integration
@@ -333,13 +347,40 @@ Agents must not finalize while validation reports missing reviews, unreviewed
 nested fields, unresolved simplification recommendations, or schema/report
 drift.
 
-## Open Design Questions
+## V1 Implementation Decisions
 
-- Which extractor should ship first: JSON Schema, TypeScript, or SQL?
-- Should review sub-runs be spawned through Codex sessions, local worker agents,
-  GitHub PR comments, or a generic command adapter?
+- Ship a TypeScript CLI on Node 22.
+- Support JSON Schema files plus Markdown fenced TypeScript, JSON, and YAML
+  blocks first.
+- Generate one standalone review prompt per extracted field so Codex or other
+  model-review runners can consume stable jobs.
+- Support an optional `--context <file>` input for `create-jobs`, `review`, and
+  `run`; include that context verbatim in generated field prompts and copy it
+  into the run directory as `project-context.md`.
+- Use a Codex-backed review strategy by default. It starts one independent
+  `codex exec` reviewer per field, constrains the final answer with
+  `schemas/field-review.schema.json`, and validates every returned review before
+  aggregation.
+- Include a conservative deterministic local fallback only for smoke tests. It
+  may keep fields or mark opaque owner boundaries, but it must not contain
+  field-specific product rename/remove rules.
+- Make the default prompt explicitly ask for a data model that can remain the
+  same for the next ten or a hundred years.
+- Keep source editing as a patch-plan/report artifact in v1. The reducer applies
+  simplifications to the normalized graph so the run can converge, but it does
+  not rewrite source files yet.
+- Reject `merge` and `move` decisions during v1 aggregation. They remain part of
+  the review vocabulary, but they require a future reducer that can prove target
+  coverage and compose path rewrites safely.
+- Treat requirements verification as a future structured contract. V1 validates
+  field-review coverage and convergence; human review still owns whether the
+  simplified model satisfies product requirements.
+
+## Remaining Design Questions
+
+- Should ACP-compatible runners share the Codex command adapter, or should they
+  consume the generated prompt jobs through a separate backend?
 - Should low-confidence keep/remove decisions trigger automatic second opinions?
-- How should requirements be represented so the reducer can verify the final
-  schema still satisfies them?
-- How much of the apply step should be automated versus patch-proposed for
-  human/agent review?
+- What is the smallest structured requirements format that can let Schemator
+  verify final schema sufficiency without turning into a product spec language?
+- Which source formats should get source-rewrite support first?

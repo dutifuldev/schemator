@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dutifuldev.github.io/schemator/schemas/aggregate-review.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "ok", "summary", "decisions", "findings"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "ok": { "type": "boolean" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["totalFields", "keep", "rename", "merge", "derive", "move", "defer", "remove", "opaque"],
+      "properties": {
+        "totalFields": { "type": "integer", "minimum": 0 },
+        "keep": { "type": "integer", "minimum": 0 },
+        "rename": { "type": "integer", "minimum": 0 },
+        "merge": { "type": "integer", "minimum": 0 },
+        "derive": { "type": "integer", "minimum": 0 },
+        "move": { "type": "integer", "minimum": 0 },
+        "defer": { "type": "integer", "minimum": 0 },
+        "remove": { "type": "integer", "minimum": 0 },
+        "opaque": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "items": { "$ref": "field-review.schema.json" }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "message"],
+        "properties": {
+          "severity": { "enum": ["error", "warning", "info"] },
+          "model": { "type": "string" },
+          "fieldPath": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  }
+}
