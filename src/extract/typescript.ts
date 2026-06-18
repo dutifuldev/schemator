@@ -1257,6 +1257,11 @@ function referencedModel(typeText: string, modelNames: Set<string>): string | nu
     if (genericArrayRef) {
       return genericArrayRef;
     }
+    const readonlyMatch = /^Readonly\s*<\s*(.+)\s*>$/.exec(candidate);
+    const readonlyRef = readonlyMatch?.[1] ? referencedModel(readonlyMatch[1], modelNames) : null;
+    if (readonlyRef) {
+      return readonlyRef;
+    }
     if (modelNames.has(candidate)) {
       return candidate;
     }

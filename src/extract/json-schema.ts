@@ -627,6 +627,9 @@ function arrayItemsType(schema: JsonSchemaLike): string {
     return "array";
   }
   if (schema.items !== undefined) {
+    if (typeof schema.items === "boolean") {
+      return "unknown";
+    }
     return schemaType(schema.items);
   }
   if (Array.isArray(schema.prefixItems)) {

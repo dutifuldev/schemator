@@ -1119,6 +1119,27 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts boolean JSON Schema array items as unconstrained", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "array",
+          items: true,
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.type, field.nullable])).toEqual([
+        ["items", "unknown", true],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts root JSON Schema prefix item object fields", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -5325,6 +5346,30 @@ describe("schemator", () => {
 
       expect(parent?.fields.map((field) => [field.path, field.objectLike, field.ref])).toEqual([
         ["box", true, "Box"],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("recognizes TypeScript readonly utility object references", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Child = { id: string };",
+          "type Parent = {",
+          "  child: Readonly<Child>;",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+      const parent = graph.models.find((model) => model.id === "Parent");
+
+      expect(parent?.fields.map((field) => [field.path, field.objectLike, field.ref])).toEqual([
+        ["child", true, "Child"],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
