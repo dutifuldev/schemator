@@ -352,18 +352,18 @@ drift.
 - Ship a TypeScript CLI on Node 22.
 - Support JSON Schema files plus Markdown fenced TypeScript, JSON, and YAML
   blocks first.
-- Generate one standalone Lindy review prompt per extracted field so external
-  Codex or agent runners can consume stable jobs.
+- Generate one standalone review prompt per extracted field so Codex or other
+  model-review runners can consume stable jobs.
 - Support an optional `--context <file>` input for `create-jobs`, `review`, and
   `run`; include that context verbatim in generated field prompts and copy it
   into the run directory as `project-context.md`.
-- Support a Codex-backed review strategy that starts one independent
+- Use a Codex-backed review strategy by default. It starts one independent
   `codex exec` reviewer per field, constrains the final answer with
   `schemas/field-review.schema.json`, and validates every returned review before
   aggregation.
-- Include a deterministic local Lindy reviewer as the first runnable backend so
-  extraction, coverage validation, aggregation, report generation, and
-  convergence can be tested without external agent sessions.
+- Include a conservative deterministic local fallback only for smoke tests. It
+  may keep fields or mark opaque owner boundaries, but it must not contain
+  field-specific product rename/remove rules.
 - Make the default prompt explicitly ask for a data model that can remain the
   same for the next ten or a hundred years.
 - Keep source editing as a patch-plan/report artifact in v1. The reducer applies

@@ -83,7 +83,7 @@ export type AggregateReview = {
 };
 
 export type ReviewOptions = {
-  strategy: "lindy";
+  strategy: "local";
   projectContext?: string;
 };
 

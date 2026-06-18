@@ -68,7 +68,7 @@ export function renderReport(graph: ModelGraph, aggregate: AggregateReview, fina
   lines.push("## Lindy Schema Notes");
   lines.push("");
   lines.push(
-    "Schemator favors small, boring, durable field names that describe stable data facts. Metaphors such as `recipe`, generic bags such as `extra`, and policy jargon such as `posture` are challenged because they tend to age poorly.",
+    "Schemator favors small, boring, durable field names that describe stable data facts. It challenges metaphorical, vague, redundant, or temporary implementation names while preserving intentional domain and declarative configuration vocabulary.",
   );
   lines.push("");
   return `${lines.join("\n")}`;

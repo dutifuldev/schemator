@@ -57,9 +57,11 @@ export function renderFieldPrompt(
     "",
     "- Use `keep` only when the field has earned its place.",
     "- Use `rename` when the concept is valid but the name is not durable.",
+    "- When a metaphorical or vague name clearly represents a closed selector, preset, variant, or reference, prefer a durable selector/reference name over `defer`.",
     "- Use `remove`, `derive`, `merge`, or `defer` when that produces a smaller viable model.",
     "- Use `opaque` only with a clear owner boundary.",
-    "- Challenge `recipe`, `posture`, `extra`, `config`, `payload`, and other vague terms.",
+    "- Challenge names that are metaphorical, vague, redundant, or tied to a temporary implementation detail.",
+    "- Preserve established declarative configuration vocabulary when the project context says that vocabulary is intentional.",
     "",
   ].join("\n");
 }

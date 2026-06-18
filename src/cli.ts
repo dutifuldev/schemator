@@ -56,7 +56,7 @@ program
   .requiredOption("--out <dir>", "review output directory")
   .option("--context <path>", "project/task context Markdown")
   .option("--jobs <dir>", "also write independent field-review prompts")
-  .option("--strategy <name>", "review strategy", "lindy")
+  .option("--strategy <name>", "review strategy", "codex")
   .option("--codex-command <path>", "Codex executable for --strategy codex", "codex")
   .option("--codex-model <name>", "Codex model for --strategy codex")
   .option("--codex-timeout-ms <n>", "per-field Codex timeout in milliseconds", "120000")
@@ -72,9 +72,9 @@ program
           ...codexOptions(options),
           ...reviewContextOptions(projectContext),
         })
-        : options.strategy === "lindy"
+        : options.strategy === "local"
           ? await writeDeterministicReviews(graph, resolvePath(options.out), {
-            strategy: "lindy",
+            strategy: "local",
             ...reviewContextOptions(projectContext),
           })
           : unsupportedStrategy(options.strategy);
@@ -164,7 +164,7 @@ program
   .requiredOption("--out <dir>", "run output directory")
   .option("--context <path>", "project/task context Markdown")
   .option("--max-iterations <n>", "maximum simplification iterations", "4")
-  .option("--strategy <name>", "review strategy", "lindy")
+  .option("--strategy <name>", "review strategy", "codex")
   .option("--codex-command <path>", "Codex executable for --strategy codex", "codex")
   .option("--codex-model <name>", "Codex model for --strategy codex")
   .option("--codex-timeout-ms <n>", "per-field Codex timeout in milliseconds", "120000")
@@ -200,9 +200,9 @@ program
             ...codexOptions(options),
             ...reviewContextOptions(projectContext),
           });
-        } else if (options.strategy === "lindy") {
+        } else if (options.strategy === "local") {
           await writeDeterministicReviews(graph, reviewsDir, {
-            strategy: "lindy",
+            strategy: "local",
             ...reviewContextOptions(projectContext),
           });
         } else {

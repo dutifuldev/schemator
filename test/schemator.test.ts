@@ -130,39 +130,34 @@ describe("schemator", () => {
     }
   });
 
-  test("renames promptRecipe and converges after simplification", async () => {
+  test("local fallback does not make field-specific semantic renames", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
-      const source = join(dir, "proposal.md");
-      await writeFile(
-        source,
-        [
-          "```ts",
-          "type ModelProfilePolicy = {",
-          "  promptRecipe?: \"standard-v1\" | \"gpt-5-v1\";",
-          "};",
-          "```",
-        ].join("\n"),
-      );
-      const graph = await extractGraph(source);
+      const graph: ModelGraph = {
+        schemaVersion: 1,
+        source: { path: "schema.ts", revision: null },
+        models: [
+          {
+            id: "ModelProfilePolicy",
+            kind: "object",
+            source: { path: "schema.ts", span: { startLine: 1, endLine: 4 } },
+            fields: [
+              field("promptRecipe", "promptRecipe", "string", false),
+              field("extends", "extends", "string", false),
+            ],
+          },
+        ],
+      };
       const reviews = await writeDeterministicReviews(graph, join(dir, "reviews"));
       const aggregate = aggregateReviews(graph, reviews);
       const promptReview = aggregate.decisions.find((review) => review.fieldPath === "promptRecipe");
+      const extendsReview = aggregate.decisions.find((review) => review.fieldPath === "extends");
 
-      expect(promptReview?.decision).toBe("rename");
-      expect(promptReview?.finalName).toBe("systemPromptVariant");
-      expect(hasSimplification(aggregate)).toBe(true);
-
-      const simplified = applyAggregateToGraph(graph, aggregate);
-      const secondReviews = await writeDeterministicReviews(simplified, join(dir, "reviews-2"));
-      const secondAggregate = aggregateReviews(simplified, secondReviews);
-
-      expect(
-        simplified.models.flatMap((model) => model.fields.map((field) => field.path)),
-      ).toContain("systemPromptVariant");
-      expect(secondAggregate.decisions.find((review) => review.fieldPath === "systemPromptVariant")?.decision).toBe(
-        "keep",
-      );
+      expect(promptReview?.decision).toBe("keep");
+      expect(promptReview?.finalName).toBe("promptRecipe");
+      expect(extendsReview?.decision).toBe("keep");
+      expect(extendsReview?.finalName).toBe("extends");
+      expect(hasSimplification(aggregate)).toBe(false);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -173,38 +168,7 @@ describe("schemator", () => {
     try {
       const fakeCodex = join(dir, "fake-codex.js");
       const reviewsDir = join(dir, "reviews");
-      await writeFile(
-        fakeCodex,
-        [
-          "#!/usr/bin/env node",
-          "let prompt = '';",
-          "process.stdin.setEncoding('utf8');",
-          "process.stdin.on('data', (chunk) => { prompt += chunk; });",
-          "process.stdin.on('end', () => {",
-          "  const model = /- Model: `([^`]+)`/.exec(prompt)?.[1] ?? 'Unknown';",
-          "  const fieldPath = /- Field path: `([^`]+)`/.exec(prompt)?.[1] ?? 'unknown';",
-          "  const fieldName = /- Field name: `([^`]+)`/.exec(prompt)?.[1] ?? fieldPath;",
-          "  const finalName = fieldName === 'promptRecipe' ? 'systemPromptVariant' : fieldName;",
-          "  console.log(JSON.stringify({",
-          "    schemaVersion: 1,",
-          "    model,",
-          "    fieldPath,",
-          "    decision: finalName === fieldName ? 'keep' : 'rename',",
-          "    finalName,",
-          "    finalPath: null,",
-          "    finalType: 'string',",
-          "    required: false,",
-          "    rationale: 'Fake reviewer received the Lindy field prompt.',",
-          "    alternatives: [finalName, 'remove'],",
-          "    simplestChoice: finalName,",
-          "    confidence: 'high',",
-          "    questions: [],",
-          "    ownerBoundary: null",
-          "  }));",
-          "});",
-        ].join("\n"),
-      );
-      await chmod(fakeCodex, 0o755);
+      await writeFakeModelReviewer(fakeCodex);
       const graph: ModelGraph = {
         schemaVersion: 1,
         source: { path: "schema.ts", revision: null },
@@ -224,6 +188,16 @@ describe("schemator", () => {
                 objectLike: false,
                 source: { path: "schema.ts", span: { startLine: 2, endLine: 2 } },
               },
+              {
+                path: "extends",
+                name: "extends",
+                type: "string",
+                required: false,
+                nullable: false,
+                parent: "Policy",
+                objectLike: false,
+                source: { path: "schema.ts", span: { startLine: 3, endLine: 3 } },
+              },
             ],
           },
         ],
@@ -232,11 +206,13 @@ describe("schemator", () => {
       const reviews = await writeCodexReviews(graph, reviewsDir, { command: fakeCodex, timeoutMs: 5_000 });
       const reviewFiles = await readdirFileNames(reviewsDir);
 
-      expect(reviews).toHaveLength(1);
-      expect(reviews[0]?.decision).toBe("rename");
-      expect(reviews[0]?.finalName).toBe("systemPromptVariant");
+      expect(reviews).toHaveLength(2);
+      expect(reviews.find((review) => review.fieldPath === "promptRecipe")?.decision).toBe("rename");
+      expect(reviews.find((review) => review.fieldPath === "promptRecipe")?.finalName).toBe("systemPromptVariant");
+      expect(reviews.find((review) => review.fieldPath === "extends")?.decision).toBe("keep");
+      expect(reviews.find((review) => review.fieldPath === "extends")?.finalName).toBe("extends");
       expect(reviews[0]).not.toHaveProperty("ownerBoundary");
-      expect(reviewFiles).toHaveLength(1);
+      expect(reviewFiles).toHaveLength(2);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -270,6 +246,15 @@ describe("schemator", () => {
     const prompt = await promptForGraph(graph);
 
     expect(prompt).not.toContain("## Project And Task Context");
+  });
+
+  test("does not inject unrelated field-specific rename hints into prompts", async () => {
+    const graph = graphWithOneField("Policy", "id", "id");
+    const prompt = await promptForGraph(graph);
+
+    expect(prompt).not.toContain("promptRecipe");
+    expect(prompt).not.toContain("contextPosture");
+    expect(prompt).not.toContain("baseProfileId");
   });
 
   test("passes project context through the Codex review adapter", async () => {
@@ -351,7 +336,7 @@ describe("schemator", () => {
       const aggregate = aggregateReviews(graph, reviews);
 
       expect(aggregate.ok).toBe(true);
-      expect(aggregate.decisions.some((review) => review.finalName === "systemPromptVariant")).toBe(true);
+      expect(aggregate.decisions.every((review) => review.decision === "keep")).toBe(true);
       await writeFile(join(dir, "aggregate.json"), JSON.stringify(aggregate, null, 2));
       const saved = JSON.parse(await readFile(join(dir, "aggregate.json"), "utf8")) as { ok: boolean };
       expect(saved.ok).toBe(true);
@@ -3917,8 +3902,8 @@ describe("schemator", () => {
 
       const report = await readFile(join(runDir, "final-report.md"), "utf8");
       expect(report).toContain("Schemator Data Model Review");
-      expect(report).toContain("| `systemPromptVariant` | `string` | no | no |");
-      expect(report).not.toContain("| `promptRecipe` | `string` | no | no |");
+      expect(report).toContain("| `promptRecipe` | `string` | no | no |");
+      expect(report).not.toContain("| `systemPromptVariant` | `string` | no | no |");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -4019,9 +4004,11 @@ describe("schemator", () => {
       const source = join(dir, "schema.ts");
       const runDir = join(dir, "run");
       const reportPath = join(runDir, "report.md");
-      await writeFile(source, "type T = { recipe: string };\n");
+      const fakeCodex = join(dir, "fake-codex.js");
+      await writeFakeModelReviewer(fakeCodex);
+      await writeFile(source, "type T = { promptRecipe: string };\n");
 
-      await execFileAsync(tsxBin(), ["src/cli.ts", "run", "--source", source, "--out", runDir], {
+      await execFileAsync(tsxBin(), ["src/cli.ts", "run", "--source", source, "--out", runDir, "--codex-command", fakeCodex], {
         cwd: process.cwd(),
       });
       await execFileAsync(tsxBin(), ["src/cli.ts", "report", "--run", runDir, "--out", reportPath], {
@@ -4030,8 +4017,8 @@ describe("schemator", () => {
 
       const report = await readFile(reportPath, "utf8");
       expect(report).toContain("- Renamed: 1");
-      expect(report).toContain("| `T` | `recipe` | rename | `variant` |");
-      expect(report).toContain("| `T` | `variant` | keep | `variant` |");
+      expect(report).toContain("| `T` | `promptRecipe` | rename | `systemPromptVariant` |");
+      expect(report).toContain("| `T` | `systemPromptVariant` | keep |");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -4045,11 +4032,11 @@ describe("schemator", () => {
       const reportPath = join(runDir, "report.md");
       await writeFile(source, "type T = { recipe: string };\n");
 
-      await execFileAsync(tsxBin(), ["src/cli.ts", "run", "--source", source, "--out", runDir], {
+      await execFileAsync(tsxBin(), ["src/cli.ts", "run", "--source", source, "--out", runDir, "--strategy", "local"], {
         cwd: process.cwd(),
       });
       await writeFile(source, "type T = { id: string };\n");
-      await execFileAsync(tsxBin(), ["src/cli.ts", "run", "--source", source, "--out", runDir], {
+      await execFileAsync(tsxBin(), ["src/cli.ts", "run", "--source", source, "--out", runDir, "--strategy", "local"], {
         cwd: process.cwd(),
       });
       await execFileAsync(tsxBin(), ["src/cli.ts", "report", "--run", runDir, "--out", reportPath], {
@@ -4077,7 +4064,7 @@ describe("schemator", () => {
       await writeFile(source, "type T = { id: string };\n");
       await writeFile(context, contextText);
 
-      await execFileAsync(tsxBin(), ["src/cli.ts", "run", "--source", source, "--context", context, "--out", runDir], {
+      await execFileAsync(tsxBin(), ["src/cli.ts", "run", "--source", source, "--context", context, "--out", runDir, "--strategy", "local"], {
         cwd: process.cwd(),
       });
 
@@ -4186,10 +4173,23 @@ describe("schemator", () => {
     try {
       const source = join(dir, "schema.ts");
       const runDir = join(dir, "run");
+      const fakeCodex = join(dir, "fake-codex.js");
+      await writeFakeModelReviewer(fakeCodex);
       await writeFile(source, ["type ModelProfilePolicy = {", "  promptRecipe?: string;", "};"].join("\n"));
 
       await expect(
-        execFileAsync(tsxBin(), ["src/cli.ts", "run", "--source", source, "--out", runDir, "--max-iterations", "1"], {
+        execFileAsync(tsxBin(), [
+          "src/cli.ts",
+          "run",
+          "--source",
+          source,
+          "--out",
+          runDir,
+          "--max-iterations",
+          "1",
+          "--codex-command",
+          fakeCodex,
+        ], {
           cwd: process.cwd(),
         }),
       ).rejects.toMatchObject({ code: 2 });
@@ -4204,9 +4204,11 @@ describe("schemator", () => {
     try {
       const source = join(dir, "schema.ts");
       const runDir = join(dir, "run");
+      const fakeCodex = join(dir, "fake-codex.js");
+      await writeFakeModelReviewer(fakeCodex);
       await writeFile(source, ["type ModelProfilePolicy = {", "  promptRecipe?: string;", "};"].join("\n"));
 
-      await execFileAsync(tsxBin(), ["src/cli.ts", "run", "--source", source, "--out", runDir], {
+      await execFileAsync(tsxBin(), ["src/cli.ts", "run", "--source", source, "--out", runDir, "--codex-command", fakeCodex], {
         cwd: process.cwd(),
       });
       const report = await readFile(join(runDir, "final-report.md"), "utf8");
@@ -5344,6 +5346,42 @@ function promptForGraph(graph: ModelGraph): string {
     throw new Error("test graph has no field");
   }
   return renderFieldPrompt(graph, model, field);
+}
+
+async function writeFakeModelReviewer(path: string): Promise<void> {
+  await writeFile(
+    path,
+    [
+      "#!/usr/bin/env node",
+      "let prompt = '';",
+      "process.stdin.setEncoding('utf8');",
+      "process.stdin.on('data', (chunk) => { prompt += chunk; });",
+      "process.stdin.on('end', () => {",
+      "  const model = /- Model: `([^`]+)`/.exec(prompt)?.[1] ?? 'Unknown';",
+      "  const fieldPath = /- Field path: `([^`]+)`/.exec(prompt)?.[1] ?? 'unknown';",
+      "  const fieldName = /- Field name: `([^`]+)`/.exec(prompt)?.[1] ?? fieldPath;",
+      "  const shouldRename = fieldName === 'promptRecipe';",
+      "  const finalName = shouldRename ? 'systemPromptVariant' : fieldName;",
+      "  console.log(JSON.stringify({",
+      "    schemaVersion: 1,",
+      "    model,",
+      "    fieldPath,",
+      "    decision: shouldRename ? 'rename' : 'keep',",
+      "    finalName,",
+      "    finalPath: null,",
+      "    finalType: 'string',",
+      "    required: false,",
+      "    rationale: shouldRename ? 'Model reviewer rejects a metaphorical prompt-construction name.' : 'Model reviewer keeps intentional declarative vocabulary.',",
+      "    alternatives: [finalName, 'remove'],",
+      "    simplestChoice: finalName,",
+      "    confidence: 'high',",
+      "    questions: [],",
+      "    ownerBoundary: null",
+      "  }));",
+      "});",
+    ].join("\n"),
+  );
+  await chmod(path, 0o755);
 }
 
 function sha256(value: string): string {
