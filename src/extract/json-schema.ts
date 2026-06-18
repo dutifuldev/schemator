@@ -339,7 +339,7 @@ function addAdditionalPropertiesFields(
   refStack: Set<string>,
   ancestorRequired: boolean,
 ): void {
-  if (schema.additionalProperties === true) {
+  if (schema.additionalProperties === true || isEmptySchema(schema.additionalProperties)) {
     addField(fields, {
       path: joinFieldPath(parentPath, "additionalProperties"),
       name: "additionalProperties",
@@ -396,6 +396,10 @@ function addAdditionalPropertiesFields(
   } else {
     visitSchemaObject(childSchema, modelId, path, fields, source, root, refStack, descendantRequired);
   }
+}
+
+function isEmptySchema(value: unknown): boolean {
+  return isRecord(value) && Object.keys(value).length === 0;
 }
 
 function visitSchemaCombinators(

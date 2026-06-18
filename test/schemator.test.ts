@@ -527,6 +527,27 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts empty-schema JSON Schema map values as permissive", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          additionalProperties: {},
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.type, field.objectLike, field.nullable])).toEqual([
+        ["additionalProperties", "unknown", true, true],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts JSON Schema pattern property scalar values", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
