@@ -588,6 +588,53 @@ describe("schemator", () => {
     );
   });
 
+  test("accepts owner-bounded object-like leaf renames", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [field("settings", "settings", "object", true)],
+        },
+      ],
+    };
+    const aggregate = aggregateReviews(graph, [
+      {
+        ...reviewWithoutFinalPath("settings", "parameters"),
+        ownerBoundary: "The owner validates keys inside this object.",
+      },
+    ]);
+
+    expect(aggregate.ok).toBe(true);
+  });
+
+  test("accepts removal-like decisions for object-like leaves", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [field("settings", "settings", "object", true)],
+        },
+      ],
+    };
+    const aggregate = aggregateReviews(graph, [
+      {
+        ...reviewWithoutFinalPath("settings", "settings"),
+        decision: "remove",
+        simplestChoice: "remove",
+      },
+    ]);
+
+    expect(aggregate.ok).toBe(true);
+  });
+
   test("extracts JSON Schema array item fields", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
