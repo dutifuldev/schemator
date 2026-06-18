@@ -6,6 +6,8 @@ type Declaration =
   | ts.InterfaceDeclaration
   | ts.TypeAliasDeclaration;
 
+type ObjectDeclarations = Map<string, Declaration[]>;
+
 export function extractTypeScriptModels(
   code: string,
   sourcePath: string,
@@ -49,11 +51,11 @@ function extractObjectModelNames(declarations: Declaration[]): Set<string> {
   return names;
 }
 
-function collectObjectDeclarations(declarations: Declaration[]): Map<string, Declaration> {
-  const objects = new Map<string, Declaration>();
+function collectObjectDeclarations(declarations: Declaration[]): ObjectDeclarations {
+  const objects: ObjectDeclarations = new Map();
   for (const declaration of declarations) {
     if (declarationHasMembers(declaration)) {
-      objects.set(declaration.name.text, declaration);
+      addObjectDeclaration(objects, declaration);
     }
   }
   let changed = true;
@@ -64,12 +66,18 @@ function collectObjectDeclarations(declarations: Declaration[]): Map<string, Dec
         continue;
       }
       if (declarationResolvesToObject(declaration, objects)) {
-        objects.set(declaration.name.text, declaration);
+        objects.set(declaration.name.text, [declaration]);
         changed = true;
       }
     }
   }
   return objects;
+}
+
+function addObjectDeclaration(objects: ObjectDeclarations, declaration: Declaration): void {
+  const declarations = objects.get(declaration.name.text) ?? [];
+  declarations.push(declaration);
+  objects.set(declaration.name.text, declarations);
 }
 
 function declarationToModel(
@@ -78,7 +86,7 @@ function declarationToModel(
   sourcePath: string,
   startLine: number,
   modelNames: Set<string>,
-  objectDeclarations: Map<string, Declaration>,
+  objectDeclarations: ObjectDeclarations,
 ): ModelNode {
   const id = declaration.name.text;
   const fields: FieldNode[] = [];
@@ -113,7 +121,7 @@ function declarationToModel(
 
 function declarationResolvesToObject(
   declaration: Declaration,
-  objectDeclarations: Map<string, Declaration>,
+  objectDeclarations: ObjectDeclarations,
 ): boolean {
   return ts.isTypeAliasDeclaration(declaration) &&
     memberGroupsForDeclaration(declaration, objectDeclarations, new Set([declaration.name.text])).length > 0;
@@ -126,7 +134,7 @@ function addInheritedInterfaceFields(
   sourcePath: string,
   startLine: number,
   modelNames: Set<string>,
-  objectDeclarations: Map<string, Declaration>,
+  objectDeclarations: ObjectDeclarations,
   fields: FieldNode[],
   seenInterfaces: Set<string>,
 ): void {
@@ -134,12 +142,15 @@ function addInheritedInterfaceFields(
     if (seenInterfaces.has(baseName)) {
       continue;
     }
-    const base = objectDeclarations.get(baseName);
-    if (!base) {
+    const baseDeclarations = objectDeclarations.get(baseName);
+    if (!baseDeclarations) {
       continue;
     }
     seenInterfaces.add(baseName);
-    if (ts.isInterfaceDeclaration(base)) {
+    for (const base of baseDeclarations) {
+      if (!ts.isInterfaceDeclaration(base)) {
+        continue;
+      }
       addInheritedInterfaceFields(
         base,
         modelId,
@@ -153,7 +164,7 @@ function addInheritedInterfaceFields(
       );
     }
     addMemberGroupsFields(
-      memberGroupsForDeclaration(base, objectDeclarations, seenInterfaces),
+      memberGroupsForDeclarations(baseDeclarations, objectDeclarations, seenInterfaces),
       "",
       modelId,
       sourceFile,
@@ -175,13 +186,27 @@ function extendedInterfaceNames(declaration: ts.InterfaceDeclaration, sourceFile
 
 function memberGroupsForDeclaration(
   declaration: Declaration,
-  objectDeclarations?: Map<string, Declaration>,
+  objectDeclarations?: ObjectDeclarations,
   seenTypes: Set<string> = new Set(),
 ): ReadonlyArray<ReadonlyArray<ts.TypeElement>> {
   if (ts.isInterfaceDeclaration(declaration)) {
     return [declaration.members];
   }
   return memberGroupsForTypeNode(declaration.type, objectDeclarations, seenTypes);
+}
+
+function memberGroupsForDeclarations(
+  declarations: readonly Declaration[],
+  objectDeclarations?: ObjectDeclarations,
+  seenTypes: Set<string> = new Set(),
+): ReadonlyArray<ReadonlyArray<ts.TypeElement>> {
+  const interfaceMembers = declarations
+    .filter(ts.isInterfaceDeclaration)
+    .flatMap((declaration) => [...declaration.members]);
+  if (interfaceMembers.length > 0 && declarations.every(ts.isInterfaceDeclaration)) {
+    return [interfaceMembers];
+  }
+  return declarations.flatMap((declaration) => memberGroupsForDeclaration(declaration, objectDeclarations, seenTypes));
 }
 
 function declarationHasMembers(declaration: Declaration): boolean {
@@ -195,7 +220,7 @@ function declarationIsArrayAlias(declaration: Declaration): boolean {
   return ts.isTypeAliasDeclaration(declaration) && Boolean(arrayElementTypeNode(declaration.type));
 }
 
-function modelKind(declaration: Declaration, objectDeclarations: Map<string, Declaration>): ModelKind {
+function modelKind(declaration: Declaration, objectDeclarations: ObjectDeclarations): ModelKind {
   if (ts.isInterfaceDeclaration(declaration)) {
     return "object";
   }
@@ -881,7 +906,7 @@ function isInlineObjectBranch(typeNode: ts.TypeNode): boolean {
 
 function topLevelObjectAlwaysPresent(
   declaration: ts.TypeAliasDeclaration,
-  objectDeclarations: Map<string, Declaration>,
+  objectDeclarations: ObjectDeclarations,
 ): boolean {
   if (typeAllowsNullish(declaration.type)) {
     return false;
@@ -904,7 +929,7 @@ function typeBranches(typeNode: ts.TypeNode): ts.TypeNode[] {
 
 function memberGroupsForTypeNode(
   typeNode: ts.TypeNode,
-  objectDeclarations: Map<string, Declaration> | undefined,
+  objectDeclarations: ObjectDeclarations | undefined,
   seenTypes: Set<string>,
 ): ReadonlyArray<ReadonlyArray<ts.TypeElement>> {
   const unwrapped = unwrapParenthesizedType(typeNode);
@@ -928,7 +953,7 @@ function memberGroupsForTypeNode(
     if (!refName || !referenced || seenTypes.has(refName)) {
       return [];
     }
-    return memberGroupsForDeclaration(referenced, objectDeclarations, new Set([...seenTypes, refName]));
+    return memberGroupsForDeclarations(referenced, objectDeclarations, new Set([...seenTypes, refName]));
   }
   return [];
 }

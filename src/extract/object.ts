@@ -39,7 +39,7 @@ export function extractObjectModel(value: unknown, modelId: string, source: Sour
   }
   return {
     id: modelId,
-    kind: "object",
+    kind: Array.isArray(value) ? "array" : "object",
     source,
     fields,
   };

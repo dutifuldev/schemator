@@ -1867,6 +1867,7 @@ describe("schemator", () => {
       );
       const graph = await extractGraph(source);
 
+      expect(graph.models[0]?.kind).toBe("array");
       expect(graph.models[0]?.fields.map((field) => field.path)).toEqual([
         "items",
         "items[].id",
@@ -2341,6 +2342,33 @@ describe("schemator", () => {
       expect(graph.models.map((model) => model.id)).toEqual(["Foo", "Parent"]);
       expect(foo?.fields.map((field) => field.path)).toEqual(["a", "b"]);
       expect(parent?.fields.map((field) => [field.path, field.ref])).toEqual([["f", "Foo"]]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("inherits merged TypeScript base interface fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "interface Base {",
+          "  a: string;",
+          "}",
+          "interface Base {",
+          "  b: string;",
+          "}",
+          "interface Child extends Base {",
+          "  c: string;",
+          "}",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+      const child = graph.models.find((model) => model.id === "Child");
+
+      expect(child?.fields.map((field) => field.path)).toEqual(["a", "b", "c"]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
