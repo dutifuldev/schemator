@@ -225,6 +225,9 @@ function visitSchemaObject(
           descendantRequired,
         );
       } else if (itemSchemas.length > 0) {
+        if (isRecord(childSchema?.properties)) {
+          visitSchemaObject(child, modelId, path, fields, source, root, refStack, descendantRequired);
+        }
         visitItemSchemas(itemSchemas, modelId, `${path}[]`, fields, source, root, refStack, descendantRequired);
       } else {
         visitSchemaObject(child, modelId, path, fields, source, root, refStack, descendantRequired);

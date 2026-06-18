@@ -84,7 +84,11 @@ function extractMarkdownModels(text: string, sourcePath: string): ModelNode[] {
       },
     };
     if (block.language === "ts" || block.language === "typescript") {
-      models.push(...extractTypeScriptModels(block.code, sourcePath, block.startLine, markdownTypeScriptModelNames));
+      models.push(
+        ...mergeDuplicateTypeScriptModels(
+          extractTypeScriptModels(block.code, sourcePath, block.startLine, markdownTypeScriptModelNames),
+        ),
+      );
       continue;
     }
     if (block.language === "json" || block.language === "jsonc") {

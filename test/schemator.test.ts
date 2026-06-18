@@ -49,6 +49,33 @@ describe("schemator", () => {
     }
   });
 
+  test("merges duplicate TypeScript model declarations inside Markdown", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "proposal.md");
+      await writeFile(
+        source,
+        [
+          "```ts",
+          "interface Policy {",
+          "  id: string;",
+          "}",
+          "interface Policy {",
+          "  variant?: string;",
+          "}",
+          "```",
+        ].join("\n"),
+      );
+
+      const graph = await extractGraph(source);
+
+      expect(graph.models.map((model) => model.id)).toEqual(["Policy"]);
+      expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["id", "variant"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts indented Markdown fences", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -858,6 +885,45 @@ describe("schemator", () => {
       expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
         ["payload", true],
         ["payload.id", false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("extracts JSON Schema object and array descendants from mixed containers", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          required: ["payload"],
+          properties: {
+            payload: {
+              type: ["object", "array"],
+              properties: {
+                id: { type: "string" },
+              },
+              required: ["id"],
+              items: {
+                type: "object",
+                properties: {
+                  code: { type: "string" },
+                },
+                required: ["code"],
+              },
+            },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
+        ["payload", true],
+        ["payload.id", false],
+        ["payload[].code", false],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
