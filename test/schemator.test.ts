@@ -1655,6 +1655,35 @@ describe("schemator", () => {
     }
   });
 
+  test("skips invalid Markdown JSONC expressions instead of coercing null", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "proposal.md");
+      await writeFile(
+        source,
+        [
+          "```jsonc",
+          "{",
+          '  "validNull": null,',
+          "}",
+          "```",
+          "```jsonc",
+          "{",
+          '  "invalidExpression": undefined,',
+          "}",
+          "```",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models.map((model) => model.fields.map((field) => [field.path, field.nullable]))).toEqual([
+        [["validNull", true]],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts Markdown JSONC array fences", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {

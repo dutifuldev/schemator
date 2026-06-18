@@ -12,6 +12,11 @@ type JsonSourceFileWithDiagnostics = ts.JsonSourceFile & {
   parseDiagnostics: readonly ts.Diagnostic[];
 };
 
+const invalidJsoncValue = Symbol("schemator.invalidJsoncValue");
+
+type JsoncValue = null | string | number | boolean | JsoncValue[] | { [key: string]: JsoncValue };
+type JsoncExpressionValue = JsoncValue | typeof invalidJsoncValue;
+
 export async function extractGraph(sourcePath: string): Promise<ModelGraph> {
   const text = await readText(sourcePath);
   const extension = extname(sourcePath).toLowerCase();
@@ -125,10 +130,11 @@ function parseJsoncLike(code: string): unknown | null {
   if (!statement || !ts.isExpressionStatement(statement)) {
     return null;
   }
-  return jsoncExpressionValue(statement.expression);
+  const value = jsoncExpressionValue(statement.expression);
+  return value === invalidJsoncValue ? null : value;
 }
 
-function jsoncExpressionValue(expression: ts.Expression): unknown | null {
+function jsoncExpressionValue(expression: ts.Expression): JsoncExpressionValue {
   if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) {
     return expression.text;
   }
@@ -146,26 +152,38 @@ function jsoncExpressionValue(expression: ts.Expression): unknown | null {
   }
   if (ts.isPrefixUnaryExpression(expression) && expression.operator === ts.SyntaxKind.MinusToken) {
     const operand = jsoncExpressionValue(expression.operand);
-    return typeof operand === "number" ? -operand : null;
+    return typeof operand === "number" ? -operand : invalidJsoncValue;
   }
   if (ts.isArrayLiteralExpression(expression)) {
-    return expression.elements.map((element) => jsoncExpressionValue(element));
+    const array: JsoncValue[] = [];
+    for (const element of expression.elements) {
+      const value = jsoncExpressionValue(element);
+      if (value === invalidJsoncValue) {
+        return invalidJsoncValue;
+      }
+      array.push(value);
+    }
+    return array;
   }
   if (ts.isObjectLiteralExpression(expression)) {
-    const object: Record<string, unknown> = {};
+    const object: Record<string, JsoncValue> = {};
     for (const property of expression.properties) {
       if (!ts.isPropertyAssignment(property)) {
-        return null;
+        return invalidJsoncValue;
       }
       const name = jsoncPropertyName(property.name);
       if (name === null) {
-        return null;
+        return invalidJsoncValue;
       }
-      object[name] = jsoncExpressionValue(property.initializer);
+      const value = jsoncExpressionValue(property.initializer);
+      if (value === invalidJsoncValue) {
+        return invalidJsoncValue;
+      }
+      object[name] = value;
     }
     return object;
   }
-  return null;
+  return invalidJsoncValue;
 }
 
 function jsoncPropertyName(name: ts.PropertyName): string | null {
