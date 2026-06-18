@@ -259,8 +259,7 @@ function addArrayAliasFields(
   }
   const elementCandidates = elementTypes.flatMap(nonNullableTypeNodes);
   const ref = referencedModelFromTypeCandidates(elementCandidates, sourceFile, modelNames);
-  const inlineObjectMemberGroups = inlineObjectMemberGroupsForTypeNodes(elementCandidates);
-  const objectLike = Boolean(ref) || inlineObjectMemberGroups.length > 0;
+  const objectLike = Boolean(ref) || hasObjectLikeBoundary(elementCandidates);
   const fieldNullable = typeAllowsNullish(declaration.type);
   fields.push({
     path: "items",
@@ -273,21 +272,23 @@ function addArrayAliasFields(
     source: spanForNode(declaration, sourceFile, sourcePath, startLine),
     ...(ref ? { ref } : {}),
   });
-  if (inlineObjectMemberGroups.length > 0) {
-    const descendantRequired = !fieldNullable && hasOnlyInlineObjectBranches(elementTypes);
-    addMemberGroupsFields(
-      inlineObjectMemberGroups,
-      "items[]",
-      declaration.name.text,
-      sourceFile,
-      sourcePath,
-      startLine,
-      modelNames,
-      fields,
-      descendantRequired,
-      false,
-    );
-  }
+  const descendantRequired = !fieldNullable;
+  addNestedTypeFields(
+    elementCandidates,
+    "items[]",
+    declaration.name.text,
+    sourceFile,
+    sourcePath,
+    startLine,
+    modelNames,
+    fields,
+    {
+      objectRequired: descendantRequired && hasOnlyInlineObjectBranches(elementTypes),
+      arrayRequired: descendantRequired && hasOnlyInlineArrayObjectBranches(elementTypes),
+      recordRequired: descendantRequired && hasOnlyRecordObjectBranches(elementTypes),
+      arrayRecordRequired: descendantRequired && hasOnlyArrayRecordObjectBranches(elementTypes),
+    },
+  );
 }
 
 type AddPropertyFieldOptions = {
@@ -316,12 +317,7 @@ function addPropertyField(
   const type = typeNode?.getText(sourceFile) ?? "unknown";
   const typeCandidates = typeNode ? nonNullableTypeNodes(typeNode) : [];
   const ref = referencedModelFromTypeCandidates(typeCandidates, sourceFile, modelNames) ?? referencedModel(type, modelNames);
-  const inlineObjectMemberGroups = inlineObjectMemberGroupsForTypeNodes(typeCandidates);
-  const inlineArrayObjectMemberGroups = inlineArrayObjectMemberGroupsForTypeNodes(typeCandidates);
-  const objectLike = Boolean(ref) ||
-    inlineObjectMemberGroups.length > 0 ||
-    inlineArrayObjectMemberGroups.length > 0 ||
-    typeCandidates.some(isRecordLikeType);
+  const objectLike = Boolean(ref) || hasObjectLikeBoundary(typeCandidates);
   const fieldRequired = (options.required ?? !member.questionToken) && (options.ancestorRequired ?? true);
   const fieldNullable = typeNode ? typeAllowsNullish(typeNode) : false;
   const descendantRequired = fieldRequired && !fieldNullable;
@@ -353,6 +349,7 @@ function addPropertyField(
         objectRequired: inlineObjectDescendantRequired,
         arrayRequired: inlineArrayDescendantRequired,
         recordRequired: descendantRequired && hasOnlyRecordObjectBranches(typeCandidates),
+        arrayRecordRequired: descendantRequired && hasOnlyArrayRecordObjectBranches(typeCandidates),
       },
     );
   }
@@ -577,15 +574,10 @@ function addIntersectionPropertyField(
     occurrences.map((candidate) => candidate.type?.getText(sourceFile) ?? "unknown"),
   ).join(" & ");
   const ref = referencedModelFromTypeCandidates(typeNodes, sourceFile, modelNames) ?? referencedModel(type, modelNames);
-  const inlineObjectMemberGroups = occurrences.flatMap((candidate) => propertyInlineObjectMemberGroups(candidate));
-  const inlineArrayObjectMemberGroups = occurrences.flatMap((candidate) => propertyInlineArrayObjectMemberGroups(candidate));
   const fieldRequired = options.ancestorRequired && occurrences.some((candidate) => !candidate.questionToken);
   const fieldNullable = occurrences.length > 0 &&
     occurrences.every((candidate) => candidate.type ? typeAllowsNullish(candidate.type) : false);
-  const objectLike = Boolean(ref) ||
-    inlineObjectMemberGroups.length > 0 ||
-    inlineArrayObjectMemberGroups.length > 0 ||
-    typeNodes.some(isRecordLikeType);
+  const objectLike = Boolean(ref) || hasObjectLikeBoundary(typeNodes);
   fields.push({
     path,
     name,
@@ -637,14 +629,9 @@ function addUnionPropertyField(
     occurrences.map((candidate) => candidate.type?.getText(sourceFile) ?? "unknown"),
   ).join(" | ");
   const ref = referencedModelFromTypeCandidates(typeNodes, sourceFile, modelNames) ?? referencedModel(type, modelNames);
-  const inlineObjectMemberGroups = occurrences.flatMap((candidate) => propertyInlineObjectMemberGroups(candidate));
-  const inlineArrayObjectMemberGroups = occurrences.flatMap((candidate) => propertyInlineArrayObjectMemberGroups(candidate));
   const fieldRequired = options.required && options.ancestorRequired;
   const fieldNullable = occurrences.some((candidate) => candidate.type ? typeAllowsNullish(candidate.type) : false);
-  const objectLike = Boolean(ref) ||
-    inlineObjectMemberGroups.length > 0 ||
-    inlineArrayObjectMemberGroups.length > 0 ||
-    typeNodes.some(isRecordLikeType);
+  const objectLike = Boolean(ref) || hasObjectLikeBoundary(typeNodes);
   fields.push({
     path,
     name,
@@ -741,14 +728,9 @@ function addIndexSignatureField(
   const typeNodes = options.typeNodesOverride ?? nonNullableTypeNodes(typeNode);
   const type = options.typeOverride ?? typeNode.getText(sourceFile);
   const ref = referencedModelFromTypeCandidates(typeNodes, sourceFile, modelNames) ?? referencedModel(type, modelNames);
-  const inlineObjectMemberGroups = inlineObjectMemberGroupsForTypeNodes(typeNodes);
-  const inlineArrayObjectMemberGroups = inlineArrayObjectMemberGroupsForTypeNodes(typeNodes);
   const fieldRequired = options.required && options.ancestorRequired;
   const fieldNullable = typeAllowsNullish(typeNode);
-  const objectLike = Boolean(ref) ||
-    inlineObjectMemberGroups.length > 0 ||
-    inlineArrayObjectMemberGroups.length > 0 ||
-    typeNodes.some(isRecordLikeType);
+  const objectLike = Boolean(ref) || hasObjectLikeBoundary(typeNodes);
   fields.push({
     path,
     name: "additionalProperties",
@@ -774,6 +756,7 @@ function addIndexSignatureField(
       objectRequired: descendantRequired && hasOnlyInlineObjectBranches(typeNodes),
       arrayRequired: descendantRequired && hasOnlyInlineArrayObjectBranches(typeNodes),
       recordRequired: descendantRequired && hasOnlyRecordObjectBranches(typeNodes),
+      arrayRecordRequired: descendantRequired && hasOnlyArrayRecordObjectBranches(typeNodes),
     },
   );
 }
@@ -808,11 +791,15 @@ function addNestedTypeFields(
       objectRequired: boolean;
       arrayRequired: boolean;
       recordRequired: boolean;
+      arrayRecordRequired: boolean;
     },
 ): void {
   const objectRequired = typeof required === "boolean" ? required && hasOnlyInlineObjectBranches(typeNodes) : required.objectRequired;
   const arrayRequired = typeof required === "boolean" ? required && hasOnlyInlineArrayObjectBranches(typeNodes) : required.arrayRequired;
   const recordRequired = typeof required === "boolean" ? required && hasOnlyRecordObjectBranches(typeNodes) : required.recordRequired;
+  const arrayRecordRequired = typeof required === "boolean"
+    ? required && hasOnlyArrayRecordObjectBranches(typeNodes)
+    : required.arrayRecordRequired;
   const inlineObjectMemberGroups = inlineObjectMemberGroupsForTypeNodes(typeNodes);
   if (inlineObjectMemberGroups.length > 0) {
     addMemberGroupsFields(
@@ -857,6 +844,20 @@ function addNestedTypeFields(
       recordRequired,
     );
   }
+  const arrayRecordValueTypes = arrayRecordValueTypeNodesForTypeNodes(typeNodes);
+  if (arrayRecordValueTypes.length > 0) {
+    addRecordValueFields(
+      arrayRecordValueTypes,
+      `${path}[]`,
+      modelId,
+      sourceFile,
+      sourcePath,
+      startLine,
+      modelNames,
+      fields,
+      arrayRecordRequired,
+    );
+  }
 }
 
 function addRecordValueFields(
@@ -874,13 +875,8 @@ function addRecordValueFields(
   const typeCandidates = valueTypes.flatMap(nonNullableTypeNodes);
   const type = uniqueStrings(valueTypes.map((candidate) => candidate.getText(sourceFile))).join(" | ");
   const ref = referencedModelFromTypeCandidates(typeCandidates, sourceFile, modelNames) ?? referencedModel(type, modelNames);
-  const inlineObjectMemberGroups = inlineObjectMemberGroupsForTypeNodes(typeCandidates);
-  const inlineArrayObjectMemberGroups = inlineArrayObjectMemberGroupsForTypeNodes(typeCandidates);
   const fieldNullable = valueTypes.some(typeAllowsNullish);
-  const objectLike = Boolean(ref) ||
-    inlineObjectMemberGroups.length > 0 ||
-    inlineArrayObjectMemberGroups.length > 0 ||
-    typeCandidates.some(isRecordLikeType);
+  const objectLike = Boolean(ref) || hasObjectLikeBoundary(typeCandidates);
   if (!fields.some((field) => field.path === path)) {
     fields.push({
       path,
@@ -908,6 +904,7 @@ function addRecordValueFields(
       objectRequired: descendantRequired && hasOnlyInlineObjectBranches(typeCandidates),
       arrayRequired: descendantRequired && hasOnlyInlineArrayObjectBranches(typeCandidates),
       recordRequired: descendantRequired && hasOnlyRecordObjectBranches(typeCandidates),
+      arrayRecordRequired: descendantRequired && hasOnlyArrayRecordObjectBranches(typeCandidates),
     },
   );
 }
@@ -974,6 +971,35 @@ function hasOnlyRecordObjectBranches(typeNodes: ts.TypeNode[]): boolean {
       return valueTypes.length > 0 &&
         valueTypes.every((valueType) => typeBranches(valueType).every(isInlineObjectBranch));
     });
+}
+
+function hasOnlyArrayRecordObjectBranches(typeNodes: ts.TypeNode[]): boolean {
+  return typeNodes.length > 0 &&
+    typeNodes.every((candidate) => {
+      const elementTypes = arrayElementTypeNodes(candidate);
+      return elementTypes.length > 0 &&
+        elementTypes.every((elementType) => hasOnlyRecordObjectBranches(nonNullableTypeNodes(elementType)));
+    });
+}
+
+function hasObjectLikeBoundary(typeNodes: ts.TypeNode[]): boolean {
+  return typeNodes.some(typeNodeHasObjectLikeBoundary);
+}
+
+function typeNodeHasObjectLikeBoundary(typeNode: ts.TypeNode): boolean {
+  const unwrapped = unwrapParenthesizedType(typeNode);
+  if (ts.isUnionTypeNode(unwrapped)) {
+    return nonNullableTypeNodes(unwrapped).some(typeNodeHasObjectLikeBoundary);
+  }
+  if (ts.isIntersectionTypeNode(unwrapped)) {
+    return unwrapped.types.some(typeNodeHasObjectLikeBoundary);
+  }
+  if (isInlineObjectBranch(unwrapped) || isRecordLikeType(unwrapped) || isOpaqueObjectType(unwrapped)) {
+    return true;
+  }
+  return arrayElementTypeNodes(unwrapped).some((elementType) =>
+    nonNullableTypeNodes(elementType).some(typeNodeHasObjectLikeBoundary)
+  );
 }
 
 function isInlineObjectBranch(typeNode: ts.TypeNode): boolean {
@@ -1084,8 +1110,22 @@ function isRecordLikeType(typeNode: ts.TypeNode): boolean {
   return false;
 }
 
+function isOpaqueObjectType(typeNode: ts.TypeNode): boolean {
+  const unwrapped = unwrapParenthesizedType(typeNode);
+  if (unwrapped.kind === ts.SyntaxKind.ObjectKeyword) {
+    return true;
+  }
+  return ts.isTypeReferenceNode(unwrapped) && typeReferenceName(unwrapped) === "Object";
+}
+
 function recordValueTypeNodesForTypeNodes(typeNodes: ts.TypeNode[]): ts.TypeNode[] {
   return typeNodes.flatMap(recordValueTypeNodesForTypeNode);
+}
+
+function arrayRecordValueTypeNodesForTypeNodes(typeNodes: ts.TypeNode[]): ts.TypeNode[] {
+  return typeNodes.flatMap((typeNode) =>
+    arrayElementTypeNodes(typeNode).flatMap((elementType) => recordValueTypeNodesForTypeNode(elementType))
+  );
 }
 
 function recordValueTypeNodesForTypeNode(typeNode: ts.TypeNode): ts.TypeNode[] {

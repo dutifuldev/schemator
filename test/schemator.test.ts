@@ -2353,6 +2353,34 @@ describe("schemator", () => {
     }
   });
 
+  test("marks opaque TypeScript object fields as object-like boundaries", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Policy = {",
+          "  metadata: object;",
+          "  data?: Object;",
+          "  payload: unknown;",
+          "  anyValue: any;",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.objectLike])).toEqual([
+        ["metadata", true],
+        ["data", true],
+        ["payload", false],
+        ["anyValue", false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("keeps parenthesized nullable TypeScript model references object-like", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -3301,6 +3329,44 @@ describe("schemator", () => {
         ["readonlySettings", false, true],
         ["readonlySettings.additionalProperties", false, true],
         ["readonlySettings.additionalProperties.id", false, false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("extracts TypeScript Record value fields inside arrays", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Rows = Array<Record<string, {",
+          "  id: string;",
+          "  recipe?: string;",
+          "}>>;",
+          "type Model = {",
+          "  rows: Array<Record<string, {",
+          "    id: string;",
+          "  }>>;",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+      const rows = graph.models.find((model) => model.id === "Rows");
+      const model = graph.models.find((candidate) => candidate.id === "Model");
+
+      expect(rows?.fields.map((field) => [field.path, field.required, field.objectLike])).toEqual([
+        ["items", true, true],
+        ["items[].additionalProperties", true, true],
+        ["items[].additionalProperties.id", true, false],
+        ["items[].additionalProperties.recipe", false, false],
+      ]);
+      expect(model?.fields.map((field) => [field.path, field.required, field.objectLike])).toEqual([
+        ["rows", true, true],
+        ["rows[].additionalProperties", true, true],
+        ["rows[].additionalProperties.id", true, false],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
