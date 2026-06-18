@@ -7,10 +7,10 @@ type ObjectShape = {
   nullablePaths: Set<string>;
 };
 
-const mixedScalarTypes = Symbol("schemator.mixedScalarTypes");
+const scalarAlternativeTypes = Symbol("schemator.scalarAlternativeTypes");
 
 type MixedScalarShape = {
-  [mixedScalarTypes]: Set<string>;
+  [scalarAlternativeTypes]: Set<string>;
 };
 
 export function extractObjectModel(value: unknown, modelId: string, source: SourceSpan): ModelNode {
@@ -123,23 +123,16 @@ function visitObject(
 }
 
 function valueType(value: unknown): string {
-  if (isMixedScalarShape(value)) {
-    return [...value[mixedScalarTypes]].sort().join(" | ") || "null";
+  const scalarTypes = scalarAlternativesForValue(value);
+  if (isPureMixedScalarShape(value)) {
+    return [...scalarTypes].sort().join(" | ") || "null";
   }
-  if (value === null) {
-    return "null";
-  }
-  if (Array.isArray(value)) {
-    return "array";
-  }
-  if (isRecord(value)) {
-    return "object";
-  }
-  return typeof value;
+  const baseType = value === null ? "null" : Array.isArray(value) ? "array" : isRecord(value) ? "object" : typeof value;
+  return [...new Set([...scalarTypes, baseType])].sort().join(" | ");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value) && !isMixedScalarShape(value);
+  return typeof value === "object" && value !== null && !Array.isArray(value) && !isPureMixedScalarShape(value);
 }
 
 function arrayObjectShape(value: unknown, seenObjects: WeakSet<object> = new WeakSet()): ObjectShape | null {
@@ -197,41 +190,40 @@ function mergeObjectShapes(
 }
 
 function mergeShapeValue(left: unknown, right: unknown, seenObjects: WeakSet<object>): unknown {
-  const scalarTypes = mergeScalarTypes(left, right);
-  if (scalarTypes) {
-    return {
-      [mixedScalarTypes]: scalarTypes,
-    } satisfies MixedScalarShape;
+  const leftScalarTypes = scalarTypesForValue(left);
+  const rightScalarTypes = scalarTypesForValue(right);
+  if (leftScalarTypes && rightScalarTypes) {
+    return mixedScalarShape(new Set([...leftScalarTypes, ...rightScalarTypes]));
   }
   if (isRecord(left) && isRecord(right)) {
     return mergeObjectShapes(left, right, seenObjects);
   }
+  if (isRecord(left) && rightScalarTypes) {
+    return withScalarAlternatives({ ...left }, rightScalarTypes);
+  }
+  if (leftScalarTypes && isRecord(right)) {
+    return withScalarAlternatives({ ...right }, leftScalarTypes);
+  }
   const leftArrayShape = arrayObjectShape(left, seenObjects);
   const rightArrayShape = arrayObjectShape(right, seenObjects);
   if (leftArrayShape && rightArrayShape) {
-    return [mergeObjectShapes(leftArrayShape.value, rightArrayShape.value, seenObjects)];
+    return withScalarAlternatives(
+      [mergeObjectShapes(leftArrayShape.value, rightArrayShape.value, seenObjects)],
+      new Set([...scalarAlternativesForValue(left), ...scalarAlternativesForValue(right)]),
+    );
   }
   if (leftArrayShape) {
-    return [leftArrayShape.value];
+    return withScalarAlternatives([leftArrayShape.value], rightScalarTypes ?? new Set());
   }
   if (rightArrayShape) {
-    return [rightArrayShape.value];
+    return withScalarAlternatives([rightArrayShape.value], leftScalarTypes ?? new Set());
   }
   return isRecord(right) && !isRecord(left) ? right : left;
 }
 
-function mergeScalarTypes(left: unknown, right: unknown): Set<string> | null {
-  const leftTypes = scalarTypesForValue(left);
-  const rightTypes = scalarTypesForValue(right);
-  if (!leftTypes || !rightTypes) {
-    return null;
-  }
-  return new Set([...leftTypes, ...rightTypes]);
-}
-
 function scalarTypesForValue(value: unknown): Set<string> | null {
-  if (isMixedScalarShape(value)) {
-    return value[mixedScalarTypes];
+  if (isPureMixedScalarShape(value)) {
+    return value[scalarAlternativeTypes];
   }
   if (value === null) {
     return new Set();
@@ -242,8 +234,39 @@ function scalarTypesForValue(value: unknown): Set<string> | null {
   return new Set([typeof value]);
 }
 
-function isMixedScalarShape(value: unknown): value is MixedScalarShape {
-  return typeof value === "object" && value !== null && mixedScalarTypes in value;
+function mixedScalarShape(scalarTypes: Set<string>): MixedScalarShape {
+  return {
+    [scalarAlternativeTypes]: scalarTypes,
+  };
+}
+
+function withScalarAlternatives<T extends object>(value: T, scalarTypes: Set<string>): T {
+  if (scalarTypes.size === 0) {
+    return value;
+  }
+  const existing = scalarAlternativesForValue(value);
+  Object.defineProperty(value, scalarAlternativeTypes, {
+    configurable: true,
+    enumerable: false,
+    value: new Set([...existing, ...scalarTypes]),
+  });
+  return value;
+}
+
+function scalarAlternativesForValue(value: unknown): Set<string> {
+  return typeof value === "object" && value !== null && scalarAlternativeTypes in value
+    ? value[scalarAlternativeTypes as keyof typeof value] as Set<string>
+    : new Set();
+}
+
+function isPureMixedScalarShape(value: unknown): value is MixedScalarShape {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    scalarAlternativeTypes in value &&
+    Object.keys(value).length === 0
+  );
 }
 
 function pathFactsForObjects(

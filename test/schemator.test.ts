@@ -2244,6 +2244,47 @@ describe("schemator", () => {
     }
   });
 
+  test("preserves structured and scalar alternatives in ordinary JSON array object fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "document.json");
+      await writeFile(
+        source,
+        JSON.stringify([
+          {
+            value: "a",
+          },
+          {
+            value: {
+              id: 1,
+            },
+          },
+          {
+            rows: "compact",
+          },
+          {
+            rows: [
+              {
+                id: "row",
+              },
+            ],
+          },
+        ]),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.type, field.required])).toEqual([
+        ["items", "array", true],
+        ["items[].value", "object | string", false],
+        ["items[].value.id", "number", false],
+        ["items[].rows", "array | string", false],
+        ["items[].rows[].id", "string", false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("marks ordinary JSON array object fields optional when entries are not objects", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -4610,6 +4651,48 @@ describe("schemator", () => {
     expect(plan).toContain("- From: `promptRecipe`");
     expect(plan).toContain("- To: `systemPromptVariant`");
     expect(plan).not.toContain("promptRecipe?:");
+  });
+
+  test("uses source field names for escaped rename text in patch plans", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [
+            {
+              ...field("a~1b", "a.b", "number", false),
+              required: false,
+            },
+          ],
+        },
+      ],
+    };
+    const aggregate: AggregateReview = {
+      schemaVersion: 1,
+      ok: true,
+      summary: {
+        totalFields: 1,
+        keep: 0,
+        rename: 1,
+        merge: 0,
+        derive: 0,
+        move: 0,
+        defer: 0,
+        remove: 0,
+        opaque: 0,
+      },
+      findings: [],
+      decisions: [reviewWithoutFinalPath("a~1b", "c.d")],
+    };
+    const plan = renderPatchPlan(graph, aggregate);
+
+    expect(plan).toContain("- From: `a.b`");
+    expect(plan).toContain("- To: `c.d`");
+    expect(plan).not.toContain("- From: `a~1b`");
   });
 
   test("uses finalName when rename review omits finalPath", () => {

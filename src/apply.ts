@@ -30,7 +30,7 @@ export function renderPatchPlan(graph: ModelGraph, aggregate: AggregateReview): 
     if (decision.decision === "rename") {
       lines.push("Suggested rename:");
       lines.push("");
-      lines.push(`- From: \`${lastSegment(decision.fieldPath)}\``);
+      lines.push(`- From: \`${sourceNameForDecision(graph, decision)}\``);
       lines.push(`- To: \`${decision.finalName}\``);
       lines.push("");
     }
@@ -68,6 +68,11 @@ function finalPathForDecision(
 
 function rawFinalPathForRename(decision: AggregateReview["decisions"][number]): string {
   return decision.finalPath ?? replaceLastFieldPathSegment(decision.fieldPath, decision.finalName);
+}
+
+function sourceNameForDecision(graph: ModelGraph, decision: AggregateReview["decisions"][number]): string {
+  const model = graph.models.find((candidate) => candidate.id === decision.model);
+  return model?.fields.find((field) => field.path === decision.fieldPath)?.name ?? lastSegment(decision.fieldPath);
 }
 
 function lastSegment(path: string): string {
