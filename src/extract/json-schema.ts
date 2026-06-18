@@ -115,13 +115,12 @@ function visitSchemaObject(
       const rootItemSchemas = itemObjectSchemas(schema, root, refStack);
       if (rootItemSchemas.length === 0) {
         if (parentPath === "") {
-          const rootArrayNullable = schemaAllowsNull(schema);
           addField(fields, {
             path: "items",
             name: "items",
             type: arrayItemsType(schema),
             required: true,
-            nullable: rootArrayNullable,
+            nullable: arrayItemsNullable(schema),
             parent: modelId,
             objectLike: false,
             source,
@@ -627,6 +626,27 @@ function arrayItemsType(schema: JsonSchemaLike): string {
     return "array";
   }
   return "unknown";
+}
+
+function arrayItemsNullable(schema: JsonSchemaLike): boolean {
+  if (Array.isArray(schema.items)) {
+    return schema.items.some(schemaItemAllowsNull);
+  }
+  if (schema.items !== undefined) {
+    return schemaItemAllowsNull(schema.items);
+  }
+  if (Array.isArray(schema.prefixItems)) {
+    return schema.prefixItems.some(schemaItemAllowsNull);
+  }
+  return false;
+}
+
+function schemaItemAllowsNull(value: unknown): boolean {
+  if (value === true) {
+    return true;
+  }
+  const schema = asSchema(value);
+  return Boolean(schema && schemaAllowsNull(schema));
 }
 
 function hasTupleItems(schema: JsonSchemaLike): boolean {

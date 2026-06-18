@@ -1068,6 +1068,29 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts nullable primitive root JSON Schema array items", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "array",
+          items: {
+            type: ["string", "null"],
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.type, field.nullable])).toEqual([
+        ["items", "string | null", true],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts JSON Schema array item fields when type is omitted", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
