@@ -2,17 +2,30 @@ import { join } from "node:path";
 import { pathToFileNamePart, prepareGeneratedOutputDir, writeText } from "./files.js";
 import type { FieldNode, ModelGraph, ModelNode } from "./types.js";
 
-export async function writeReviewJobs(graph: ModelGraph, outputDir: string): Promise<void> {
+export type FieldPromptOptions = {
+  projectContext?: string;
+};
+
+export async function writeReviewJobs(
+  graph: ModelGraph,
+  outputDir: string,
+  options: FieldPromptOptions = {},
+): Promise<void> {
   await prepareGeneratedOutputDir(outputDir, ".prompt.md");
   for (const model of graph.models) {
     for (const field of model.fields) {
       const fileName = `${pathToFileNamePart(model.id)}.${pathToFileNamePart(field.path)}.prompt.md`;
-      await writeText(join(outputDir, fileName), renderFieldPrompt(graph, model, field));
+      await writeText(join(outputDir, fileName), renderFieldPrompt(graph, model, field, options));
     }
   }
 }
 
-export function renderFieldPrompt(graph: ModelGraph, model: ModelNode, field: FieldNode): string {
+export function renderFieldPrompt(
+  graph: ModelGraph,
+  model: ModelNode,
+  field: FieldNode,
+  options: FieldPromptOptions = {},
+): string {
   return [
     "# Schemator Field Review",
     "",
@@ -20,6 +33,7 @@ export function renderFieldPrompt(graph: ModelGraph, model: ModelNode, field: Fi
     "",
     "Return only valid JSON matching `schemas/field-review.schema.json`.",
     "",
+    ...projectContextSection(options.projectContext),
     "## Field Under Review",
     "",
     `- Model: \`${model.id}\``,
@@ -48,4 +62,16 @@ export function renderFieldPrompt(graph: ModelGraph, model: ModelNode, field: Fi
     "- Challenge `recipe`, `posture`, `extra`, `config`, `payload`, and other vague terms.",
     "",
   ].join("\n");
+}
+
+function projectContextSection(projectContext: string | undefined): string[] {
+  if (projectContext === undefined || projectContext.trim().length === 0) {
+    return [];
+  }
+  return [
+    "## Project And Task Context",
+    "",
+    projectContext.trimEnd(),
+    "",
+  ];
 }

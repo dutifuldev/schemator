@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +11,7 @@ import { writeCodexReviews } from "../src/codex-review.js";
 import { extractGraph } from "../src/extract/index.js";
 import { pathToFileNamePart } from "../src/files.js";
 import { applyAggregateToGraph, hasSimplification } from "../src/graph.js";
-import { writeReviewJobs } from "../src/jobs.js";
+import { renderFieldPrompt, writeReviewJobs } from "../src/jobs.js";
 import { renderReport } from "../src/report.js";
 import { writeDeterministicReviews } from "../src/review.js";
 import type { AggregateReview, ModelGraph } from "../src/types.js";
@@ -209,6 +210,91 @@ describe("schemator", () => {
       expect(reviews[0]?.finalName).toBe("systemPromptVariant");
       expect(reviews[0]).not.toHaveProperty("ownerBoundary");
       expect(reviewFiles).toHaveLength(1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("includes project context in generated field prompts", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const jobsDir = join(dir, "jobs");
+      const graph = graphWithOneField("Policy", "extends", "extends");
+      await writeReviewJobs(graph, jobsDir, {
+        projectContext: [
+          "This schema uses durable declarative configuration vocabulary.",
+          "Profiles may be optimized with GEPA.",
+        ].join("\n"),
+      });
+      const jobFiles = await readdirFileNames(jobsDir);
+      const prompt = await readFile(join(jobsDir, jobFiles[0] ?? ""), "utf8");
+
+      expect(prompt).toContain("## Project And Task Context");
+      expect(prompt).toContain("durable declarative configuration vocabulary");
+      expect(prompt).toContain("Profiles may be optimized with GEPA.");
+      expect(prompt.indexOf("## Project And Task Context")).toBeLessThan(prompt.indexOf("## Field Under Review"));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("omits project context section when no context is supplied", async () => {
+    const graph = graphWithOneField("Policy", "id", "id");
+    const prompt = await promptForGraph(graph);
+
+    expect(prompt).not.toContain("## Project And Task Context");
+  });
+
+  test("passes project context through the Codex review adapter", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const fakeCodex = join(dir, "fake-codex.js");
+      const reviewsDir = join(dir, "reviews");
+      await writeFile(
+        fakeCodex,
+        [
+          "#!/usr/bin/env node",
+          "let prompt = '';",
+          "process.stdin.setEncoding('utf8');",
+          "process.stdin.on('data', (chunk) => { prompt += chunk; });",
+          "process.stdin.on('end', () => {",
+          "  if (!prompt.includes('Profiles may be optimized with GEPA.')) {",
+          "    console.error('missing project context');",
+          "    process.exit(1);",
+          "  }",
+          "  const model = /- Model: `([^`]+)`/.exec(prompt)?.[1] ?? 'Unknown';",
+          "  const fieldPath = /- Field path: `([^`]+)`/.exec(prompt)?.[1] ?? 'unknown';",
+          "  const fieldName = /- Field name: `([^`]+)`/.exec(prompt)?.[1] ?? fieldPath;",
+          "  console.log(JSON.stringify({",
+          "    schemaVersion: 1,",
+          "    model,",
+          "    fieldPath,",
+          "    decision: 'keep',",
+          "    finalName: fieldName,",
+          "    finalPath: null,",
+          "    finalType: 'string',",
+          "    required: false,",
+          "    rationale: 'Fake reviewer received project context.',",
+          "    alternatives: [fieldName, 'remove'],",
+          "    simplestChoice: fieldName,",
+          "    confidence: 'high',",
+          "    questions: [],",
+          "    ownerBoundary: null",
+          "  }));",
+          "});",
+        ].join("\n"),
+      );
+      await chmod(fakeCodex, 0o755);
+      const graph = graphWithOneField("Policy", "id", "id");
+
+      const reviews = await writeCodexReviews(graph, reviewsDir, {
+        command: fakeCodex,
+        timeoutMs: 5_000,
+        projectContext: "Profiles may be optimized with GEPA.",
+      });
+
+      expect(reviews).toHaveLength(1);
+      expect(reviews[0]?.rationale).toBe("Fake reviewer received project context.");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -3433,6 +3519,67 @@ describe("schemator", () => {
     }
   });
 
+  test("run copies project context and records its hash", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      const context = join(dir, "project-context.md");
+      const runDir = join(dir, "run");
+      const contextText = [
+        "Model harness profiles are user-facing declarative configuration.",
+        "Third parties can customize how models are called.",
+      ].join("\n");
+      await writeFile(source, "type T = { id: string };\n");
+      await writeFile(context, contextText);
+
+      await execFileAsync(tsxBin(), ["src/cli.ts", "run", "--source", source, "--context", context, "--out", runDir], {
+        cwd: process.cwd(),
+      });
+
+      const copiedContext = await readFile(join(runDir, "project-context.md"), "utf8");
+      const summary = JSON.parse(await readFile(join(runDir, "run-summary.json"), "utf8")) as Record<string, unknown>;
+      const jobFiles = await readdirFileNames(join(runDir, "jobs.iteration-1"));
+      const prompt = await readFile(join(runDir, "jobs.iteration-1", jobFiles[0] ?? ""), "utf8");
+
+      expect(copiedContext).toBe(contextText);
+      expect(summary["projectContext"]).toBe("project-context.md");
+      expect(summary["projectContextSha256"]).toBe(sha256(contextText));
+      expect(prompt).toContain("## Project And Task Context");
+      expect(prompt).toContain("Third parties can customize how models are called.");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("create-jobs fails clearly when project context cannot be read", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const graphPath = join(dir, "graph.json");
+      const missingContext = join(dir, "missing.md");
+      await writeFile(graphPath, JSON.stringify(graphWithOneField("Policy", "id", "id"), null, 2));
+
+      await expect(
+        execFileAsync(tsxBin(), [
+          "src/cli.ts",
+          "create-jobs",
+          "--graph",
+          graphPath,
+          "--context",
+          missingContext,
+          "--out",
+          join(dir, "jobs"),
+        ], {
+          cwd: process.cwd(),
+        }),
+      ).rejects.toMatchObject({
+        code: 2,
+        stderr: expect.stringContaining("unable to read --context file"),
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("apply refuses invalid aggregates", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -4519,6 +4666,45 @@ function reviewWithoutFinalPath(fieldPath: string, finalName: string) {
     confidence: "high" as const,
     questions: [],
   };
+}
+
+function graphWithOneField(modelId: string, path: string, name: string): ModelGraph {
+  return {
+    schemaVersion: 1,
+    source: { path: "schema.ts", revision: null },
+    models: [
+      {
+        id: modelId,
+        kind: "object",
+        source: { path: "schema.ts", span: { startLine: 1, endLine: 3 } },
+        fields: [
+          {
+            path,
+            name,
+            type: "string",
+            required: false,
+            nullable: false,
+            parent: modelId,
+            objectLike: false,
+            source: { path: "schema.ts", span: { startLine: 2, endLine: 2 } },
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function promptForGraph(graph: ModelGraph): string {
+  const model = graph.models[0];
+  const field = model?.fields[0];
+  if (!model || !field) {
+    throw new Error("test graph has no field");
+  }
+  return renderFieldPrompt(graph, model, field);
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function tsxBin(): string {

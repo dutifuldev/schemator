@@ -11,6 +11,7 @@ export type CodexReviewOptions = {
   model?: string;
   cwd?: string;
   timeoutMs?: number;
+  projectContext?: string;
 };
 
 export async function writeCodexReviews(
@@ -22,7 +23,12 @@ export async function writeCodexReviews(
   const reviews: FieldReview[] = [];
   for (const model of graph.models) {
     for (const field of model.fields) {
-      const prompt = renderFieldPrompt(graph, model, field);
+      const prompt = renderFieldPrompt(
+        graph,
+        model,
+        field,
+        options.projectContext === undefined ? {} : { projectContext: options.projectContext },
+      );
       const review = await runCodexFieldReview(prompt, options);
       const validation = validateFieldReview(review);
       if (!validation.ok) {

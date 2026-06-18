@@ -158,12 +158,19 @@ Spawn one independent review run per added or changed field/column.
 
 Each sub-run receives:
 
+- project and task context when provided;
 - model purpose;
 - current required use cases;
 - the full current schema for context;
 - the normalized field graph;
 - exactly one field or column under review;
 - naming conventions and minimum viable schema rules.
+
+Project/task context is a first-class review input, not a hardcoded rule list.
+It can explain the product, target users, durable domain vocabulary, examples
+versus canonical schema boundaries, long-term automation goals, and missing
+semantics reviewers should ask about. It must be passed to every independent
+field reviewer so decisions are not made from bare field names alone.
 
 Each sub-run must return structured JSON:
 
@@ -279,8 +286,9 @@ Recommended output directory:
 
 ```text
 .schemator/
-  requirements.md
+  project-context.md
   graph.iteration-1.json
+  jobs.iteration-1/
   reviews.iteration-1/
     ModelProfilePolicy.promptRecipe.review.json
     ModelProfilePolicy.reasoningDefault.review.json
@@ -306,7 +314,8 @@ Target command family:
 
 ```bash
 schemator extract --source schema.ts --out .schemator/graph.iteration-1.json
-schemator review --graph .schemator/graph.iteration-1.json --out .schemator/reviews.iteration-1
+schemator create-jobs --graph .schemator/graph.iteration-1.json --context project-context.md --out .schemator/jobs.iteration-1
+schemator review --graph .schemator/graph.iteration-1.json --context project-context.md --out .schemator/reviews.iteration-1
 schemator aggregate --graph .schemator/graph.iteration-1.json --reviews .schemator/reviews.iteration-1 --out .schemator/aggregate.iteration-1.json
 schemator apply --graph .schemator/graph.iteration-1.json --aggregate .schemator/aggregate.iteration-1.json --out .schemator/patch.iteration-1.md
 schemator validate --graph .schemator/graph.iteration-2.json --reviews .schemator/reviews.iteration-2
@@ -316,7 +325,7 @@ schemator report --run .schemator --out .schemator/final-report.md
 V1 end-to-end run:
 
 ```bash
-schemator run --source schema.ts --out .schemator
+schemator run --source schema.ts --context project-context.md --out .schemator
 ```
 
 ## Agent Integration
@@ -345,6 +354,9 @@ drift.
   blocks first.
 - Generate one standalone Lindy review prompt per extracted field so external
   Codex or agent runners can consume stable jobs.
+- Support an optional `--context <file>` input for `create-jobs`, `review`, and
+  `run`; include that context verbatim in generated field prompts and copy it
+  into the run directory as `project-context.md`.
 - Support a Codex-backed review strategy that starts one independent
   `codex exec` reviewer per field, constrains the final answer with
   `schemas/field-review.schema.json`, and validates every returned review before

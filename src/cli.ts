@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from "node:crypto";
 import { access, mkdir, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Command } from "commander";
@@ -6,7 +7,7 @@ import { aggregateReviews, readReviews } from "./aggregate.js";
 import { renderPatchPlan } from "./apply.js";
 import { writeCodexReviews } from "./codex-review.js";
 import { extractGraph } from "./extract/index.js";
-import { readJson, resolvePath, writeJson, writeText } from "./files.js";
+import { readJson, readText, resolvePath, writeJson, writeText } from "./files.js";
 import { applyAggregateToGraph, hasSimplification } from "./graph.js";
 import { writeReviewJobs } from "./jobs.js";
 import { renderReport } from "./report.js";
@@ -39,11 +40,13 @@ program
 program
   .command("create-jobs")
   .requiredOption("--graph <path>", "model graph JSON")
+  .option("--context <path>", "project/task context Markdown")
   .requiredOption("--out <dir>", "field prompt output directory")
-  .action(async (options: { graph: string; out: string }) => {
+  .action(async (options: { graph: string; context?: string; out: string }) => {
     await runCommand(async () => {
       const graph = assertModelGraph(await readJson(resolvePath(options.graph)));
-      await writeReviewJobs(graph, resolvePath(options.out));
+      const projectContext = await readProjectContext(options.context);
+      await writeReviewJobs(graph, resolvePath(options.out), reviewContextOptions(projectContext));
     });
   });
 
@@ -51,6 +54,7 @@ program
   .command("review")
   .requiredOption("--graph <path>", "model graph JSON")
   .requiredOption("--out <dir>", "review output directory")
+  .option("--context <path>", "project/task context Markdown")
   .option("--jobs <dir>", "also write independent field-review prompts")
   .option("--strategy <name>", "review strategy", "lindy")
   .option("--codex-command <path>", "Codex executable for --strategy codex", "codex")
@@ -59,13 +63,20 @@ program
   .action(async (options: ReviewCommandOptions) => {
     await runCommand(async () => {
       const graph = assertModelGraph(await readJson(resolvePath(options.graph)));
+      const projectContext = await readProjectContext(options.context);
       if (options.jobs) {
-        await writeReviewJobs(graph, resolvePath(options.jobs));
+        await writeReviewJobs(graph, resolvePath(options.jobs), reviewContextOptions(projectContext));
       }
       const reviews = options.strategy === "codex"
-        ? await writeCodexReviews(graph, resolvePath(options.out), codexOptions(options))
+        ? await writeCodexReviews(graph, resolvePath(options.out), {
+          ...codexOptions(options),
+          ...reviewContextOptions(projectContext),
+        })
         : options.strategy === "lindy"
-          ? await writeDeterministicReviews(graph, resolvePath(options.out), { strategy: "lindy" })
+          ? await writeDeterministicReviews(graph, resolvePath(options.out), {
+            strategy: "lindy",
+            ...reviewContextOptions(projectContext),
+          })
           : unsupportedStrategy(options.strategy);
       for (const review of reviews) {
         const validation = validateFieldReview(review);
@@ -151,6 +162,7 @@ program
   .command("run")
   .requiredOption("--source <path>", "schema or proposal source")
   .requiredOption("--out <dir>", "run output directory")
+  .option("--context <path>", "project/task context Markdown")
   .option("--max-iterations <n>", "maximum simplification iterations", "4")
   .option("--strategy <name>", "review strategy", "lindy")
   .option("--codex-command <path>", "Codex executable for --strategy codex", "codex")
@@ -164,7 +176,11 @@ program
       if (!Number.isInteger(maxIterations) || maxIterations < 1) {
         throw new Error("--max-iterations must be a positive integer");
       }
+      const projectContext = await readProjectContext(options.context);
       await mkdir(out, { recursive: true });
+      if (projectContext !== undefined) {
+        await writeText(join(out, "project-context.md"), projectContext);
+      }
       const initialGraph = await extractGraph(source);
       let graph: ModelGraph = initialGraph;
       let lastAggregate: AggregateReview | null = null;
@@ -178,11 +194,17 @@ program
         const jobsDir = join(out, `jobs.iteration-${iteration}`);
         const aggregatePath = join(out, `aggregate.iteration-${iteration}.json`);
         await writeJson(graphPath, graph);
-        await writeReviewJobs(graph, jobsDir);
+        await writeReviewJobs(graph, jobsDir, reviewContextOptions(projectContext));
         if (options.strategy === "codex") {
-          await writeCodexReviews(graph, reviewsDir, codexOptions(options));
+          await writeCodexReviews(graph, reviewsDir, {
+            ...codexOptions(options),
+            ...reviewContextOptions(projectContext),
+          });
         } else if (options.strategy === "lindy") {
-          await writeDeterministicReviews(graph, reviewsDir, { strategy: "lindy" });
+          await writeDeterministicReviews(graph, reviewsDir, {
+            strategy: "lindy",
+            ...reviewContextOptions(projectContext),
+          });
         } else {
           unsupportedStrategy(options.strategy);
         }
@@ -217,6 +239,12 @@ program
             stable: lastAggregate ? lastAggregate.ok && !hasSimplification(lastAggregate) : false,
             finalGraph: "graph.final.json",
             finalReport: "final-report.md",
+            ...(projectContext !== undefined
+              ? {
+                projectContext: "project-context.md",
+                projectContextSha256: sha256(projectContext),
+              }
+              : {}),
           },
           null,
           2,
@@ -238,6 +266,7 @@ await program.parseAsync();
 type ReviewCommandOptions = {
   graph: string;
   out: string;
+  context?: string;
   jobs?: string;
   strategy: string;
   codexCommand: string;
@@ -248,6 +277,7 @@ type ReviewCommandOptions = {
 type RunCommandOptions = {
   source: string;
   out: string;
+  context?: string;
   maxIterations: string;
   strategy: string;
   codexCommand: string;
@@ -273,6 +303,27 @@ function codexOptions(options: Pick<ReviewCommandOptions, "codexCommand" | "code
 
 function unsupportedStrategy(strategy: string): never {
   throw new Error(`unsupported review strategy: ${strategy}`);
+}
+
+async function readProjectContext(path: string | undefined): Promise<string | undefined> {
+  if (!path) {
+    return undefined;
+  }
+  const resolved = resolvePath(path);
+  try {
+    return await readText(resolved);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`unable to read --context file ${resolved}: ${message}`);
+  }
+}
+
+function reviewContextOptions(projectContext: string | undefined): { projectContext?: string } {
+  return projectContext === undefined ? {} : { projectContext };
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 async function aggregateFromFiles(graphPath: string, reviewsDir: string): Promise<AggregateReview> {

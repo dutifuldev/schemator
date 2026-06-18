@@ -84,6 +84,7 @@ export type AggregateReview = {
 
 export type ReviewOptions = {
   strategy: "lindy";
+  projectContext?: string;
 };
 
 export type ExtractOptions = {
