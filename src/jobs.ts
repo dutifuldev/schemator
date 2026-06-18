@@ -51,7 +51,7 @@ export function renderFieldPrompt(
     "",
     "## Full Graph Context",
     "",
-    ...graph.models.map((candidate) => `- \`${candidate.id}\`: ${candidate.fields.length} fields`),
+    ...graph.models.flatMap(renderGraphModelContext),
     "",
     "## Decision Rules",
     "",
@@ -75,5 +75,17 @@ function projectContextSection(projectContext: string | undefined): string[] {
     "",
     projectContext.trimEnd(),
     "",
+  ];
+}
+
+function renderGraphModelContext(model: ModelNode): string[] {
+  if (model.fields.length === 0) {
+    return [`- \`${model.id}\`: no fields`];
+  }
+  return [
+    `- \`${model.id}\`:`,
+    ...model.fields.map((field) =>
+      `  - \`${field.path}\`: \`${field.type}\`${field.required ? "" : " (optional)"}`
+    ),
   ];
 }

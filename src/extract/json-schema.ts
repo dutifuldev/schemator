@@ -847,7 +847,7 @@ function schemaAllowsNull(schema: JsonSchemaLike): boolean {
       return Boolean(candidateSchema && schemaCanAcceptNull(candidateSchema));
     });
   }
-  return types.includes("null");
+  return true;
 }
 
 function schemaCanAcceptNull(schema: JsonSchemaLike): boolean {

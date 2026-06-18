@@ -257,6 +257,54 @@ describe("schemator", () => {
     expect(prompt).not.toContain("baseProfileId");
   });
 
+  test("includes referenced model fields in generated field prompts", async () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.ts", revision: null },
+      models: [
+        {
+          id: "Parent",
+          kind: "object",
+          source: { path: "schema.ts", span: { startLine: 1, endLine: 3 } },
+          fields: [
+            {
+              path: "child",
+              name: "child",
+              type: "Child",
+              required: true,
+              nullable: false,
+              parent: "Parent",
+              objectLike: true,
+              ref: "Child",
+              source: { path: "schema.ts", span: { startLine: 2, endLine: 2 } },
+            },
+          ],
+        },
+        {
+          id: "Child",
+          kind: "object",
+          source: { path: "schema.ts", span: { startLine: 4, endLine: 6 } },
+          fields: [
+            {
+              path: "name",
+              name: "name",
+              type: "string",
+              required: true,
+              nullable: false,
+              parent: "Child",
+              objectLike: false,
+              source: { path: "schema.ts", span: { startLine: 5, endLine: 5 } },
+            },
+          ],
+        },
+      ],
+    };
+    const prompt = await promptForGraph(graph);
+
+    expect(prompt).toContain("- `Child`:");
+    expect(prompt).toContain("  - `name`: `string`");
+  });
+
   test("passes project context through the Codex review adapter", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -527,6 +575,32 @@ describe("schemator", () => {
 
       expect(graph.models[0]?.fields.map((field) => [field.path, field.type, field.objectLike, field.nullable])).toEqual([
         ["additionalProperties", "unknown", true, true],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("marks unconstrained JSON Schema properties nullable", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          properties: {
+            anything: {},
+            described: { description: "any JSON value" },
+          },
+          required: ["anything", "described"],
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.nullable])).toEqual([
+        ["anything", true],
+        ["described", true],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -1038,7 +1112,7 @@ describe("schemator", () => {
       expect(graph.models[0]?.kind).toBe("array");
       expect(graph.models[0]?.fields.map((field) => [field.path, field.required, field.objectLike])).toEqual([
         ["items", true, true],
-        ["items[].id", true, false],
+        ["items[].id", false, false],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -2130,7 +2204,7 @@ describe("schemator", () => {
 
       expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
         ["config", true],
-        ["config.id", true],
+        ["config.id", false],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
