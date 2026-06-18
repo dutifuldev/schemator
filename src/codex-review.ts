@@ -29,7 +29,7 @@ export async function writeCodexReviews(
         field,
         options.projectContext === undefined ? {} : { projectContext: options.projectContext },
       );
-      const review = await runCodexFieldReview(prompt, options);
+      const review = bindReviewIdentity(await runCodexFieldReview(prompt, options), model.id, field.path);
       const validation = validateFieldReview(review);
       if (!validation.ok) {
         throw new Error(
@@ -42,6 +42,14 @@ export async function writeCodexReviews(
     }
   }
   return reviews;
+}
+
+function bindReviewIdentity(review: FieldReview, model: string, fieldPath: string): FieldReview {
+  return {
+    ...review,
+    model,
+    fieldPath,
+  };
 }
 
 async function runCodexFieldReview(prompt: string, options: CodexReviewOptions): Promise<FieldReview> {

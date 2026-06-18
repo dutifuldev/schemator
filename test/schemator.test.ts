@@ -234,6 +234,50 @@ describe("schemator", () => {
     }
   });
 
+  test("binds Codex review identity to the reviewed field", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const fakeCodex = join(dir, "fake-codex.js");
+      const reviewsDir = join(dir, "reviews");
+      await writeFile(
+        fakeCodex,
+        [
+          "#!/usr/bin/env node",
+          "console.log(JSON.stringify({",
+          "  schemaVersion: 1,",
+          "  model: 'WrongModel',",
+          "  fieldPath: 'Policy.id',",
+          "  decision: 'keep',",
+          "  finalName: 'id',",
+          "  finalType: 'string',",
+          "  required: true,",
+          "  rationale: 'test',",
+          "  alternatives: ['id'],",
+          "  simplestChoice: 'id',",
+          "  confidence: 'high',",
+          "  questions: []",
+          "}));",
+        ].join("\n"),
+      );
+      await chmod(fakeCodex, 0o755);
+      const graph = graphWithOneField("Policy", "id", "id");
+
+      const reviews = await writeCodexReviews(graph, reviewsDir, { command: fakeCodex, timeoutMs: 5_000 });
+      const reviewFiles = await readdirFileNames(reviewsDir);
+      const written = JSON.parse(await readFile(join(reviewsDir, reviewFiles[0] ?? ""), "utf8")) as {
+        model: string;
+        fieldPath: string;
+      };
+
+      expect(reviews[0]?.model).toBe("Policy");
+      expect(reviews[0]?.fieldPath).toBe("id");
+      expect(written.model).toBe("Policy");
+      expect(written.fieldPath).toBe("id");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("includes project context in generated field prompts", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
