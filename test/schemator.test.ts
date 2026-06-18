@@ -760,6 +760,77 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts root JSON Schema prefix item object fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          $schema: "https://json-schema.org/draft/2020-12/schema",
+          type: "array",
+          prefixItems: [
+            {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+              },
+              required: ["id"],
+            },
+          ],
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.kind).toBe("array");
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required, field.objectLike])).toEqual([
+        ["items", true, true],
+        ["items[].id", false, false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("extracts root JSON Schema tuple item object fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "array",
+          items: [
+            {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+              },
+              required: ["id"],
+            },
+            {
+              type: "object",
+              properties: {
+                name: { type: "string" },
+              },
+              required: ["name"],
+            },
+          ],
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.kind).toBe("array");
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required, field.objectLike])).toEqual([
+        ["items", true, true],
+        ["items[].id", false, false],
+        ["items[].name", false, false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts primitive root JSON Schema array items", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {

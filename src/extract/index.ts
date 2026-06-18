@@ -186,6 +186,7 @@ function isJsonSchema(value: unknown): value is Record<string, unknown> {
     isRecord(value["$defs"]) ||
     isRecord(value["definitions"]) ||
     isRecord(value["patternProperties"]) ||
+    Array.isArray(value["prefixItems"]) ||
     Array.isArray(value["allOf"]) ||
     Array.isArray(value["anyOf"]) ||
     Array.isArray(value["oneOf"]);
@@ -193,6 +194,7 @@ function isJsonSchema(value: unknown): value is Record<string, unknown> {
     hasRootSchemaKeyword ||
     isRecord(value["properties"]) ||
     isRecord(value["patternProperties"]) ||
+    "prefixItems" in value ||
     "items" in value;
   const hasOnlySchemaRootKeys = Object.keys(value).every(isSchemaRootKey);
   return (
@@ -232,6 +234,7 @@ const schemaRootKeys = new Set([
   "oneOf",
   "pattern",
   "patternProperties",
+  "prefixItems",
   "properties",
   "required",
   "title",
@@ -251,6 +254,7 @@ function isSchemaProperty(value: unknown): boolean {
     isSchemaType(value["type"]) ||
     isRecord(value["properties"]) ||
     isRecord(value["patternProperties"]) ||
+    Array.isArray(value["prefixItems"]) ||
     Array.isArray(value["allOf"]) ||
     Array.isArray(value["anyOf"]) ||
     Array.isArray(value["oneOf"]) ||

@@ -9,6 +9,7 @@ type JsonSchemaLike = {
   additionalProperties?: unknown;
   required?: unknown;
   items?: unknown;
+  prefixItems?: unknown;
   allOf?: unknown;
   anyOf?: unknown;
   oneOf?: unknown;
@@ -94,15 +95,15 @@ function visitSchemaObject(
       refStack,
       ancestorRequired,
     );
-    if (schema && (hasSchemaType(schema, "array") || "items" in schema)) {
-      const rootItemSchema = itemObjectSchema(schema, root, refStack);
-      if (!rootItemSchema) {
+    if (schema && (hasSchemaType(schema, "array") || "items" in schema || "prefixItems" in schema)) {
+      const rootItemSchemas = itemObjectSchemas(schema, root, refStack);
+      if (rootItemSchemas.length === 0) {
         if (parentPath === "") {
           const rootArrayNullable = schemaAllowsNull(schema);
           addField(fields, {
             path: "items",
             name: "items",
-            type: schemaType(schema.items),
+            type: arrayItemsType(schema),
             required: true,
             nullable: rootArrayNullable,
             parent: modelId,
@@ -123,17 +124,9 @@ function visitSchemaObject(
         );
         return;
       }
+      const tupleItems = hasTupleItems(schema);
       if (parentPath !== "") {
-        visitSchemaObject(
-          rootItemSchema.value,
-          modelId,
-          `${parentPath}[]`,
-          fields,
-          source,
-          root,
-          withRef(refStack, rootItemSchema.ref),
-          ancestorRequired,
-        );
+        visitItemSchemas(rootItemSchemas, modelId, `${parentPath}[]`, fields, source, root, refStack, tupleItems ? false : ancestorRequired);
         visitSchemaCombinators(
           schema,
           modelId,
@@ -158,16 +151,7 @@ function visitSchemaObject(
         objectLike: true,
         source,
       });
-      visitSchemaObject(
-        rootItemSchema.value,
-        modelId,
-        "items[]",
-        fields,
-        source,
-        root,
-        withRef(refStack, rootItemSchema.ref),
-        !rootArrayNullable,
-      );
+      visitItemSchemas(rootItemSchemas, modelId, "items[]", fields, source, root, refStack, !rootArrayNullable && !tupleItems);
     }
     visitSchemaCombinators(
       schema,
@@ -194,7 +178,10 @@ function visitSchemaObject(
     const type = schemaType(childSchema ?? child);
     const fieldRequired = ancestorRequired && required.has(name);
     const fieldNullable = Boolean(childSchema && schemaOrRefAllowsNull(childSchema, refSchema));
-    const itemSchema = childSchema ? itemObjectSchema(childSchema, root, refStack) : null;
+    const itemSchemas = childSchema ? itemObjectSchemas(childSchema, root, refStack) : [];
+    const itemSchema = childSchema && itemSchemas.length === 1 && !hasTupleItems(childSchema)
+      ? itemSchemas[0] ?? null
+      : null;
     const descendantRequired = Boolean(
       fieldRequired && childSchema && schemaAlwaysRequiredNestedContainer(childSchema, refSchema, itemSchema, root, refStack),
     );
@@ -222,17 +209,8 @@ function visitSchemaObject(
           withRef(refStack, refSchema.ref),
           descendantRequired,
         );
-      } else if (itemSchema) {
-        visitSchemaObject(
-          itemSchema.value,
-          modelId,
-          `${path}[]`,
-          fields,
-          source,
-          root,
-          withRef(refStack, itemSchema.ref),
-          descendantRequired,
-        );
+      } else if (itemSchemas.length > 0) {
+        visitItemSchemas(itemSchemas, modelId, `${path}[]`, fields, source, root, refStack, descendantRequired);
       } else {
         visitSchemaObject(child, modelId, path, fields, source, root, refStack, descendantRequired);
       }
@@ -294,7 +272,8 @@ function addPatternPropertiesFields(
       ? resolveRefSchema(root, childSchema.$ref, refStack)
       : null;
     const path = joinFieldPath(patternParentPath, pattern);
-    const itemSchema = itemObjectSchema(childSchema, root, refStack);
+    const itemSchemas = itemObjectSchemas(childSchema, root, refStack);
+    const itemSchema = itemSchemas.length === 1 && !hasTupleItems(childSchema) ? itemSchemas[0] ?? null : null;
     const descendantRequired = Boolean(
       ancestorRequired && schemaAlwaysRequiredNestedContainer(childSchema, refSchema, itemSchema, root, refStack),
     );
@@ -324,17 +303,8 @@ function addPatternPropertiesFields(
         withRef(refStack, refSchema.ref),
         descendantRequired,
       );
-    } else if (itemSchema) {
-      visitSchemaObject(
-        itemSchema.value,
-        modelId,
-        `${path}[]`,
-        fields,
-        source,
-        root,
-        withRef(refStack, itemSchema.ref),
-        descendantRequired,
-      );
+    } else if (itemSchemas.length > 0) {
+      visitItemSchemas(itemSchemas, modelId, `${path}[]`, fields, source, root, refStack, descendantRequired);
     } else {
       visitSchemaObject(childSchema, modelId, path, fields, source, root, refStack, descendantRequired);
     }
@@ -372,7 +342,8 @@ function addAdditionalPropertiesFields(
     ? resolveRefSchema(root, childSchema.$ref, refStack)
     : null;
   const path = joinFieldPath(parentPath, "additionalProperties");
-  const itemSchema = itemObjectSchema(childSchema, root, refStack);
+  const itemSchemas = itemObjectSchemas(childSchema, root, refStack);
+  const itemSchema = itemSchemas.length === 1 && !hasTupleItems(childSchema) ? itemSchemas[0] ?? null : null;
   const descendantRequired = Boolean(
     ancestorRequired && schemaAlwaysRequiredNestedContainer(childSchema, refSchema, itemSchema, root, refStack),
   );
@@ -402,17 +373,8 @@ function addAdditionalPropertiesFields(
       withRef(refStack, refSchema.ref),
       descendantRequired,
     );
-  } else if (itemSchema) {
-    visitSchemaObject(
-      itemSchema.value,
-      modelId,
-      `${path}[]`,
-      fields,
-      source,
-      root,
-      withRef(refStack, itemSchema.ref),
-      descendantRequired,
-    );
+  } else if (itemSchemas.length > 0) {
+    visitItemSchemas(itemSchemas, modelId, `${path}[]`, fields, source, root, refStack, descendantRequired);
   } else {
     visitSchemaObject(childSchema, modelId, path, fields, source, root, refStack, descendantRequired);
   }
@@ -479,12 +441,51 @@ function addField(fields: FieldNode[], field: FieldNode): void {
   }
 }
 
-function itemObjectSchema(schema: JsonSchemaLike, root: unknown, refStack: Set<string>): ResolvedSchema | null {
-  const items = schema.items;
-  if (hasObjectSchemaShape(items, root, refStack)) {
-    return { value: items };
+function visitItemSchemas(
+  itemSchemas: ResolvedSchema[],
+  modelId: string,
+  parentPath: string,
+  fields: FieldNode[],
+  source: SourceSpan,
+  root: unknown,
+  refStack: Set<string>,
+  ancestorRequired: boolean,
+): void {
+  for (const itemSchema of itemSchemas) {
+    visitSchemaObject(
+      itemSchema.value,
+      modelId,
+      parentPath,
+      fields,
+      source,
+      root,
+      withRef(refStack, itemSchema.ref),
+      ancestorRequired,
+    );
   }
-  return null;
+}
+
+function itemObjectSchemas(schema: JsonSchemaLike, root: unknown, refStack: Set<string>): ResolvedSchema[] {
+  const schemas: ResolvedSchema[] = [];
+  addItemObjectSchema(schemas, schema.items, root, refStack);
+  for (const item of schemaArray(schema.items)) {
+    addItemObjectSchema(schemas, item, root, refStack);
+  }
+  for (const item of schemaArray(schema.prefixItems)) {
+    addItemObjectSchema(schemas, item, root, refStack);
+  }
+  return schemas;
+}
+
+function addItemObjectSchema(
+  schemas: ResolvedSchema[],
+  value: unknown,
+  root: unknown,
+  refStack: Set<string>,
+): void {
+  if (hasObjectSchemaShape(value, root, refStack)) {
+    schemas.push({ value });
+  }
 }
 
 function hasObjectSchemaShape(value: unknown, root: unknown, refStack: Set<string>): boolean {
@@ -503,6 +504,7 @@ function hasObjectSchemaShape(value: unknown, root: unknown, refStack: Set<strin
     hasSchemaType(schema, "object") ||
     isRecord(schema.properties) ||
     isRecord(schema.patternProperties) ||
+    itemObjectSchemas(schema, root, refStack).length > 0 ||
     schemaArray(schema.allOf).some((item) => hasObjectSchemaShape(item, root, refStack)) ||
     [...schemaArray(schema.anyOf), ...schemaArray(schema.oneOf)].some((item) =>
       hasObjectSchemaShape(item, root, refStack)
@@ -526,7 +528,7 @@ function hasNestedSchema(value: unknown, root: unknown, refStack: Set<string>): 
     isRecord(schema.properties) ||
     isRecord(schema.patternProperties) ||
     hasSchemaType(schema, "object") ||
-    Boolean(itemObjectSchema(schema, root, refStack)) ||
+    itemObjectSchemas(schema, root, refStack).length > 0 ||
     schemaArray(schema.allOf).some((item) => hasNestedSchema(item, root, refStack)) ||
     [...schemaArray(schema.anyOf), ...schemaArray(schema.oneOf)].some((item) =>
       hasNestedSchema(item, root, refStack)
@@ -554,10 +556,27 @@ function schemaType(value: unknown): string {
   if (isRecord(schema.patternProperties)) {
     return "object";
   }
-  if ("items" in schema) {
+  if ("items" in schema || "prefixItems" in schema) {
     return "array";
   }
   return "unknown";
+}
+
+function arrayItemsType(schema: JsonSchemaLike): string {
+  if (Array.isArray(schema.items)) {
+    return "array";
+  }
+  if (schema.items !== undefined) {
+    return schemaType(schema.items);
+  }
+  if (Array.isArray(schema.prefixItems)) {
+    return "array";
+  }
+  return "unknown";
+}
+
+function hasTupleItems(schema: JsonSchemaLike): boolean {
+  return Array.isArray(schema.items) || Array.isArray(schema.prefixItems);
 }
 
 function asSchema(value: unknown): JsonSchemaLike | null {
@@ -671,7 +690,7 @@ function schemaModelKind(value: unknown, root: unknown, refStack: Set<string>): 
     const refSchema = resolveRefSchema(root, schema.$ref, refStack);
     return refSchema ? schemaModelKind(refSchema.value, root, withRef(refStack, refSchema.ref)) : "object";
   }
-  if (hasSchemaType(schema, "array") || "items" in schema) {
+  if (hasSchemaType(schema, "array") || "items" in schema || "prefixItems" in schema) {
     return "array";
   }
   if (schemaArray(schema.allOf).some((candidate) => schemaModelKind(candidate, root, refStack) === "array")) {
@@ -700,6 +719,9 @@ function schemaAlwaysArray(value: unknown, root: unknown, refStack: Set<string>)
   const types = schemaTypes(schema.type);
   if (types.length > 0) {
     return types.length === 1 && types[0] === "array";
+  }
+  if ("prefixItems" in schema) {
+    return true;
   }
   const allOf = schemaArray(schema.allOf);
   if (allOf.some((candidate) => schemaAlwaysArray(candidate, root, refStack))) {
