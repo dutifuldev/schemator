@@ -44,7 +44,7 @@ function extractDirectModels(
   source: SourceSpan,
 ): ModelNode[] {
   if (extension === ".ts" || extension === ".tsx") {
-    return extractTypeScriptModels(text, sourcePath, 1);
+    return mergeDuplicateTypeScriptModels(extractTypeScriptModels(text, sourcePath, 1));
   }
   if (extension === ".json") {
     const parsed = JSON.parse(text) as unknown;
@@ -173,6 +173,50 @@ function jsoncPropertyName(name: ts.PropertyName): string | null {
     return name.text;
   }
   return null;
+}
+
+function mergeDuplicateTypeScriptModels(models: ModelNode[]): ModelNode[] {
+  const mergedById = new Map<string, ModelNode>();
+  const merged: ModelNode[] = [];
+  for (const model of models) {
+    const existing = mergedById.get(model.id);
+    if (!existing) {
+      const copy = {
+        ...model,
+        fields: model.fields.map((field) => ({ ...field })),
+      };
+      mergedById.set(model.id, copy);
+      merged.push(copy);
+      continue;
+    }
+    existing.kind = existing.kind === model.kind ? existing.kind : "object";
+    for (const field of model.fields) {
+      mergeField(existing.fields, {
+        ...field,
+        parent: existing.id,
+      });
+    }
+  }
+  return merged;
+}
+
+function mergeField(fields: ModelNode["fields"], field: ModelNode["fields"][number]): void {
+  const existing = fields.find((candidate) => candidate.path === field.path);
+  if (!existing) {
+    fields.push(field);
+    return;
+  }
+  existing.type = uniqueTypeParts([...existing.type.split(" & "), ...field.type.split(" & ")]).join(" & ");
+  existing.required = existing.required || field.required;
+  existing.nullable = existing.nullable || field.nullable;
+  existing.objectLike = existing.objectLike || field.objectLike;
+  if (!existing.ref && field.ref) {
+    existing.ref = field.ref;
+  }
+}
+
+function uniqueTypeParts(parts: string[]): string[] {
+  return [...new Set(parts.map((part) => part.trim()).filter(Boolean))];
 }
 
 function isJsonSchema(value: unknown): value is Record<string, unknown> {

@@ -915,6 +915,48 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts JSON Schema ref sibling fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          $schema: "https://json-schema.org/draft/2020-12/schema",
+          type: "object",
+          properties: {
+            thing: {
+              $ref: "#/$defs/Base",
+              properties: {
+                name: { type: "string" },
+              },
+              required: ["name"],
+            },
+          },
+          required: ["thing"],
+          $defs: {
+            Base: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+              },
+              required: ["id"],
+            },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
+        ["thing", true],
+        ["thing.id", true],
+        ["thing.name", true],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts JSON Schema combinator object fields", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -2269,6 +2311,36 @@ describe("schemator", () => {
       const user = graph.models.find((model) => model.id === "User");
 
       expect(user?.fields.map((field) => field.path)).toEqual(["id", "name", "promptRecipe"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("merges direct TypeScript interface declarations", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "interface Foo {",
+          "  a: string;",
+          "}",
+          "interface Foo {",
+          "  b: number;",
+          "}",
+          "type Parent = {",
+          "  f: Foo;",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+      const foo = graph.models.find((model) => model.id === "Foo");
+      const parent = graph.models.find((model) => model.id === "Parent");
+
+      expect(graph.models.map((model) => model.id)).toEqual(["Foo", "Parent"]);
+      expect(foo?.fields.map((field) => field.path)).toEqual(["a", "b"]);
+      expect(parent?.fields.map((field) => [field.path, field.ref])).toEqual([["f", "Foo"]]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

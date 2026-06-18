@@ -69,6 +69,20 @@ function visitSchemaObject(
         inheritedRequired,
       );
     }
+    const siblingSchema = refSiblingSchema(schema);
+    if (siblingSchema) {
+      visitSchemaObject(
+        siblingSchema,
+        modelId,
+        parentPath,
+        fields,
+        source,
+        root,
+        refStack,
+        ancestorRequired,
+        inheritedRequired,
+      );
+    }
     return;
   }
   if (!schema) {
@@ -200,13 +214,13 @@ function visitSchemaObject(
     if (objectLike) {
       if (refSchema) {
         visitSchemaObject(
-          refSchema.value,
+          childSchema,
           modelId,
           path,
           fields,
           source,
           root,
-          withRef(refStack, refSchema.ref),
+          refStack,
           descendantRequired,
         );
       } else if (itemSchemas.length > 0) {
@@ -294,13 +308,13 @@ function addPatternPropertiesFields(
     }
     if (refSchema) {
       visitSchemaObject(
-        refSchema.value,
+        childSchema,
         modelId,
         path,
         fields,
         source,
         root,
-        withRef(refStack, refSchema.ref),
+        refStack,
         descendantRequired,
       );
     } else if (itemSchemas.length > 0) {
@@ -364,13 +378,13 @@ function addAdditionalPropertiesFields(
   }
   if (refSchema) {
     visitSchemaObject(
-      refSchema.value,
+      childSchema,
       modelId,
       path,
       fields,
       source,
       root,
-      withRef(refStack, refSchema.ref),
+      refStack,
       descendantRequired,
     );
   } else if (itemSchemas.length > 0) {
@@ -494,11 +508,16 @@ function hasObjectSchemaShape(value: unknown, root: unknown, refStack: Set<strin
     return false;
   }
   if (typeof schema.$ref === "string") {
+    const siblingSchema = refSiblingSchema(schema);
+    const siblingHasObjectShape = siblingSchema ? hasObjectSchemaShape(siblingSchema, root, refStack) : false;
     if (refStack.has(schema.$ref)) {
       return true;
     }
     const refSchema = resolveRefSchema(root, schema.$ref, refStack);
-    return Boolean(refSchema && hasObjectSchemaShape(refSchema.value, root, withRef(refStack, refSchema.ref)));
+    return Boolean(
+      siblingHasObjectShape ||
+        (refSchema && hasObjectSchemaShape(refSchema.value, root, withRef(refStack, refSchema.ref))),
+    );
   }
   return (
     hasSchemaType(schema, "object") ||
@@ -518,11 +537,16 @@ function hasNestedSchema(value: unknown, root: unknown, refStack: Set<string>): 
     return false;
   }
   if (typeof schema.$ref === "string") {
+    const siblingSchema = refSiblingSchema(schema);
+    const siblingHasNestedSchema = siblingSchema ? hasNestedSchema(siblingSchema, root, refStack) : false;
     if (refStack.has(schema.$ref)) {
       return true;
     }
     const refSchema = resolveRefSchema(root, schema.$ref, refStack);
-    return Boolean(refSchema && hasNestedSchema(refSchema.value, root, withRef(refStack, refSchema.ref)));
+    return Boolean(
+      siblingHasNestedSchema ||
+        (refSchema && hasNestedSchema(refSchema.value, root, withRef(refStack, refSchema.ref))),
+    );
   }
   return (
     isRecord(schema.properties) ||
@@ -560,6 +584,25 @@ function schemaType(value: unknown): string {
     return "array";
   }
   return "unknown";
+}
+
+function refSiblingSchema(schema: JsonSchemaLike): JsonSchemaLike | null {
+  const siblings = { ...schema };
+  delete siblings.$ref;
+  return hasSchemaWork(siblings) ? siblings : null;
+}
+
+function hasSchemaWork(schema: JsonSchemaLike): boolean {
+  return (
+    isRecord(schema.properties) ||
+    isRecord(schema.patternProperties) ||
+    schema.additionalProperties !== undefined ||
+    "items" in schema ||
+    "prefixItems" in schema ||
+    schemaArray(schema.allOf).length > 0 ||
+    schemaArray(schema.anyOf).length > 0 ||
+    schemaArray(schema.oneOf).length > 0
+  );
 }
 
 function arrayItemsType(schema: JsonSchemaLike): string {
