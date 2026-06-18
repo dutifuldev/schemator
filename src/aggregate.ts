@@ -131,10 +131,10 @@ export function aggregateReviews(graph: ModelGraph, reviews: FieldReview[]): Agg
         !isRemovalLikeDecision(descendant.decision)
       ) {
         findings.push({
-          severity: "error",
+          severity: "warning",
           model: review.model,
           fieldPath: review.fieldPath,
-          message: "Parent removal conflicts with descendant review decision.",
+          message: "Parent removal conflicts with descendant review decision and is not auto-applied by the v1 graph reducer.",
         });
         break;
       }

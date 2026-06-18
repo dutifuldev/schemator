@@ -4410,7 +4410,7 @@ describe("schemator", () => {
     }
   });
 
-  test("rejects simplification rename collisions", () => {
+  test("skips simplification rename collisions", () => {
     const graph: ModelGraph = {
       schemaVersion: 1,
       source: { path: "schema.json", revision: null },
@@ -4450,10 +4450,13 @@ describe("schemator", () => {
       ],
     };
 
-    expect(() => applyAggregateToGraph(graph, aggregate)).toThrow("duplicate field path");
+    expect(applyAggregateToGraph(graph, aggregate).models[0]?.fields.map((field) => field.path)).toEqual([
+      "recipe",
+      "variant",
+    ]);
   });
 
-  test("flags simplification rename collisions during aggregation", () => {
+  test("keeps simplification rename collisions non-fatal during aggregation", () => {
     const graph: ModelGraph = {
       schemaVersion: 1,
       source: { path: "schema.json", revision: null },
@@ -4478,10 +4481,11 @@ describe("schemator", () => {
       },
     ]);
 
-    expect(aggregate.ok).toBe(false);
-    expect(aggregate.findings.map((finding) => finding.message).join("\n")).toContain(
-      "duplicate field path JsonSchema.variant",
-    );
+    expect(aggregate.ok).toBe(true);
+    expect(applyAggregateToGraph(graph, aggregate).models[0]?.fields.map((field) => field.path)).toEqual([
+      "recipe",
+      "variant",
+    ]);
   });
 
   test("keeps merge and move decisions as manual structural proposals", () => {
@@ -4569,7 +4573,7 @@ describe("schemator", () => {
     ]);
   });
 
-  test("rejects parent removal when a descendant review keeps the child", () => {
+  test("keeps parent removal conflicts as manual proposals", () => {
     const graph: ModelGraph = {
       schemaVersion: 1,
       source: { path: "schema.json", revision: null },
@@ -4598,10 +4602,14 @@ describe("schemator", () => {
       },
     ]);
 
-    expect(aggregate.ok).toBe(false);
+    expect(aggregate.ok).toBe(true);
     expect(aggregate.findings.map((finding) => finding.message)).toContain(
-      "Parent removal conflicts with descendant review decision.",
+      "Parent removal conflicts with descendant review decision and is not auto-applied by the v1 graph reducer.",
     );
+    expect(applyAggregateToGraph(graph, aggregate).models[0]?.fields.map((field) => field.path)).toEqual([
+      "config",
+      "config.id",
+    ]);
   });
 
   test("rejects low-confidence simplifications before reduction", () => {

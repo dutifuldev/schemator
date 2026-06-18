@@ -19,24 +19,14 @@ export function applyAggregateToGraph(graph: ModelGraph, aggregate: AggregateRev
     ...graph,
     models: graph.models.map((model) => {
       const decisions = decisionsByModel.get(model.id) ?? [];
-      const renameMap = new Map(
-        decisions
-          .filter((decision) => decision.confidence !== "low" && decision.decision === "rename")
-          .map((decision) => [decision.fieldPath, finalPathForRename(decision)]),
-      );
-      const renameNames = new Map(
-        decisions
-          .filter((decision) => decision.confidence !== "low" && decision.decision === "rename")
-          .map((decision) => [decision.fieldPath, decision.finalName]),
-      );
       const removed = new Set(
         decisions
-          .filter((decision) =>
-            decision.confidence !== "low" &&
-            (decision.decision === "remove" || decision.decision === "derive" || decision.decision === "defer")
-          )
+          .filter((decision) => isAutoApplicableRemoval(decision, decisions))
           .map((decision) => decision.fieldPath),
       );
+      const activeFields = model.fields.filter((field) => !isRemoved(field.path, removed));
+      const renameMap = applicableRenameMap(activeFields, decisions);
+      const renameNames = applicableRenameNames(decisions, renameMap);
       const fields = model.fields
         .filter((field) => !isRemoved(field.path, removed))
         .map((field) => applyRenames(field, renameMap, renameNames));
@@ -49,6 +39,64 @@ export function applyAggregateToGraph(graph: ModelGraph, aggregate: AggregateRev
   };
 }
 
+function applicableRenameMap(fields: FieldNode[], decisions: AggregateReview["decisions"]): Map<string, string> {
+  const renameMap = new Map<string, string>();
+  for (const decision of sortedRenameDecisions(decisions)) {
+    const candidateMap = new Map(renameMap);
+    candidateMap.set(decision.fieldPath, finalPathForRename(decision));
+    if (hasUniquePaths(fields.map((field) => applyRenameMapToPath(field.path, candidateMap)))) {
+      renameMap.set(decision.fieldPath, finalPathForRename(decision));
+    }
+  }
+  return renameMap;
+}
+
+function applicableRenameNames(
+  decisions: AggregateReview["decisions"],
+  renameMap: Map<string, string>,
+): Map<string, string> {
+  return new Map(
+    decisions
+      .filter((decision) => decision.decision === "rename" && renameMap.has(decision.fieldPath))
+      .map((decision) => [decision.fieldPath, decision.finalName]),
+  );
+}
+
+function sortedRenameDecisions(decisions: AggregateReview["decisions"]): FieldReview[] {
+  return decisions
+    .filter((decision) => decision.confidence !== "low" && decision.decision === "rename")
+    .sort((left, right) => confidenceRank(right.confidence) - confidenceRank(left.confidence));
+}
+
+function confidenceRank(confidence: FieldReview["confidence"]): number {
+  if (confidence === "high") {
+    return 3;
+  }
+  if (confidence === "medium") {
+    return 2;
+  }
+  return 1;
+}
+
+function hasUniquePaths(paths: string[]): boolean {
+  return new Set(paths).size === paths.length;
+}
+
+function isAutoApplicableRemoval(decision: FieldReview, decisions: AggregateReview["decisions"]): boolean {
+  return (
+    decision.confidence !== "low" &&
+    (decision.decision === "remove" || decision.decision === "derive" || decision.decision === "defer") &&
+    !decisions.some((candidate) =>
+      candidate.model === decision.model &&
+      candidate.fieldPath !== decision.fieldPath &&
+      isDescendantPath(candidate.fieldPath, decision.fieldPath) &&
+      candidate.decision !== "remove" &&
+      candidate.decision !== "derive" &&
+      candidate.decision !== "defer"
+    )
+  );
+}
+
 function isRemoved(path: string, removed: Set<string>): boolean {
   for (const removedPath of removed) {
     if (path === removedPath || path.startsWith(`${removedPath}.`) || path.startsWith(`${removedPath}[].`)) {
@@ -56,6 +104,10 @@ function isRemoved(path: string, removed: Set<string>): boolean {
     }
   }
   return false;
+}
+
+function isDescendantPath(path: string, parent: string): boolean {
+  return path.startsWith(`${parent}.`) || path.startsWith(`${parent}[].`);
 }
 
 function isGraphChangingSimplification(review: FieldReview): boolean {
