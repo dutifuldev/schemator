@@ -1,6 +1,6 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { parentFieldPath, replaceLastFieldPathSegment } from "./field-path.js";
+import { replaceLastFieldPathSegment } from "./field-path.js";
 import { applyAggregateToGraph } from "./graph.js";
 import { readJson } from "./files.js";
 import type { AggregateFinding, AggregateReview, Decision, FieldReview, ModelGraph } from "./types.js";
@@ -96,10 +96,10 @@ export function aggregateReviews(graph: ModelGraph, reviews: FieldReview[]): Agg
     }
     if (review.decision === "merge" || review.decision === "move") {
       findings.push({
-        severity: "error",
+        severity: "warning",
         model: review.model,
         fieldPath: review.fieldPath,
-        message: `Decision ${review.decision} is not supported by the v1 graph reducer.`,
+        message: `Decision ${review.decision} is a manual structural proposal and is not auto-applied by the v1 graph reducer.`,
       });
     }
     if (isSimplifyingDecision(review.decision) && review.confidence === "low") {
@@ -108,22 +108,6 @@ export function aggregateReviews(graph: ModelGraph, reviews: FieldReview[]): Agg
         model: review.model,
         fieldPath: review.fieldPath,
         message: "Low-confidence simplification decisions require focused follow-up before reduction.",
-      });
-    }
-    if (review.decision === "rename" && parentFieldPath(finalPathForRename(review)) !== parentFieldPath(review.fieldPath)) {
-      findings.push({
-        severity: "error",
-        model: review.model,
-        fieldPath: review.fieldPath,
-        message: "Rename decision cannot move fields in the v1 graph reducer.",
-      });
-    }
-    if (review.decision === "rename" && finalPathForRename(review) !== expectedFinalPathForRename(review)) {
-      findings.push({
-        severity: "error",
-        model: review.model,
-        fieldPath: review.fieldPath,
-        message: "Rename finalPath must match the escaped finalName.",
       });
     }
     if (!fieldKeys.has(key)) {
@@ -228,10 +212,6 @@ function isDescendantPath(path: string, parent: string): boolean {
 }
 
 function finalPathForRename(review: FieldReview): string {
-  return review.finalPath ?? replaceLastFieldPathSegment(review.fieldPath, review.finalName);
-}
-
-function expectedFinalPathForRename(review: FieldReview): string {
   return replaceLastFieldPathSegment(review.fieldPath, review.finalName);
 }
 

@@ -1,7 +1,7 @@
 import type { AggregateReview, FieldNode, FieldReview, ModelGraph } from "./types.js";
 import { parentFieldPath, replaceLastFieldPathSegment } from "./field-path.js";
 
-const simplifyingDecisions = new Set(["rename", "merge", "derive", "move", "defer", "remove"]);
+const simplifyingDecisions = new Set(["rename", "derive", "defer", "remove"]);
 
 export function hasSimplification(aggregate: AggregateReview): boolean {
   return aggregate.decisions.some((review) => review.confidence !== "low" && isGraphChangingSimplification(review));
@@ -69,15 +69,7 @@ function isGraphChangingSimplification(review: FieldReview): boolean {
 }
 
 function finalPathForRename(decision: FieldReview): string {
-  const expectedFinalPath = replaceLastFieldPathSegment(decision.fieldPath, decision.finalName);
-  const finalPath = decision.finalPath ?? expectedFinalPath;
-  if (parentFieldPath(finalPath) !== parentFieldPath(decision.fieldPath)) {
-    throw new Error(`rename cannot move field ${decision.model}.${decision.fieldPath} to ${finalPath}`);
-  }
-  if (finalPath !== expectedFinalPath) {
-    throw new Error(`rename finalPath for ${decision.model}.${decision.fieldPath} must match finalName ${decision.finalName}`);
-  }
-  return finalPath;
+  return replaceLastFieldPathSegment(decision.fieldPath, decision.finalName);
 }
 
 function applyRenames(field: FieldNode, renameMap: Map<string, string>, renameNames: Map<string, string>): FieldNode {

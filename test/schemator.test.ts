@@ -4440,7 +4440,7 @@ describe("schemator", () => {
     );
   });
 
-  test("rejects unsupported merge and move decisions during aggregation", () => {
+  test("keeps merge and move decisions as manual structural proposals", () => {
     const graph: ModelGraph = {
       schemaVersion: 1,
       source: { path: "schema.json", revision: null },
@@ -4468,16 +4468,17 @@ describe("schemator", () => {
       },
     ]);
 
-    expect(aggregate.ok).toBe(false);
+    expect(aggregate.ok).toBe(true);
     expect(aggregate.findings.map((finding) => finding.message)).toEqual(
       expect.arrayContaining([
-        "Decision merge is not supported by the v1 graph reducer.",
-        "Decision move is not supported by the v1 graph reducer.",
+        "Decision merge is a manual structural proposal and is not auto-applied by the v1 graph reducer.",
+        "Decision move is a manual structural proposal and is not auto-applied by the v1 graph reducer.",
       ]),
     );
+    expect(aggregate.findings.every((finding) => finding.severity === "warning")).toBe(true);
   });
 
-  test("rejects rename decisions that move fields across parents", () => {
+  test("normalizes rename decisions with overqualified final paths", () => {
     const graph: ModelGraph = {
       schemaVersion: 1,
       source: { path: "schema.json", revision: null },
@@ -4493,32 +4494,13 @@ describe("schemator", () => {
 
     const aggregate = aggregateReviews(graph, [review("config.recipe", "other.variant")]);
 
-    expect(aggregate.ok).toBe(false);
-    expect(aggregate.findings.map((finding) => finding.message)).toContain(
-      "Rename decision cannot move fields in the v1 graph reducer.",
-    );
-    expect(() =>
-      applyAggregateToGraph(graph, {
-        schemaVersion: 1,
-        ok: true,
-        summary: {
-          totalFields: 1,
-          keep: 0,
-          rename: 1,
-          merge: 0,
-          derive: 0,
-          move: 0,
-          defer: 0,
-          remove: 0,
-          opaque: 0,
-        },
-        findings: [],
-        decisions: [review("config.recipe", "other.variant")],
-      }),
-    ).toThrow("rename cannot move field");
+    expect(aggregate.ok).toBe(true);
+    expect(applyAggregateToGraph(graph, aggregate).models[0]?.fields.map((field) => field.path)).toEqual([
+      "config.variant",
+    ]);
   });
 
-  test("rejects rename decisions whose finalPath and finalName disagree", () => {
+  test("uses finalName when rename finalPath and finalName disagree", () => {
     const graph: ModelGraph = {
       schemaVersion: 1,
       source: { path: "schema.json", revision: null },
@@ -4537,29 +4519,10 @@ describe("schemator", () => {
     };
     const aggregate = aggregateReviews(graph, [mismatchedReview]);
 
-    expect(aggregate.ok).toBe(false);
-    expect(aggregate.findings.map((finding) => finding.message)).toContain(
-      "Rename finalPath must match the escaped finalName.",
-    );
-    expect(() =>
-      applyAggregateToGraph(graph, {
-        schemaVersion: 1,
-        ok: true,
-        summary: {
-          totalFields: 1,
-          keep: 0,
-          rename: 1,
-          merge: 0,
-          derive: 0,
-          move: 0,
-          defer: 0,
-          remove: 0,
-          opaque: 0,
-        },
-        findings: [],
-        decisions: [mismatchedReview],
-      }),
-    ).toThrow("must match finalName");
+    expect(aggregate.ok).toBe(true);
+    expect(applyAggregateToGraph(graph, aggregate).models[0]?.fields.map((field) => field.path)).toEqual([
+      "config.preset",
+    ]);
   });
 
   test("rejects parent removal when a descendant review keeps the child", () => {

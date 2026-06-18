@@ -67,7 +67,7 @@ function finalPathForDecision(
 }
 
 function rawFinalPathForRename(decision: AggregateReview["decisions"][number]): string {
-  return decision.finalPath ?? replaceLastFieldPathSegment(decision.fieldPath, decision.finalName);
+  return replaceLastFieldPathSegment(decision.fieldPath, decision.finalName);
 }
 
 function sourceNameForDecision(graph: ModelGraph, decision: AggregateReview["decisions"][number]): string {
