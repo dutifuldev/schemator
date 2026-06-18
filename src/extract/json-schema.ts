@@ -351,6 +351,19 @@ function addAdditionalPropertiesFields(
   refStack: Set<string>,
   ancestorRequired: boolean,
 ): void {
+  if (schema.additionalProperties === true) {
+    addField(fields, {
+      path: joinFieldPath(parentPath, "additionalProperties"),
+      name: "additionalProperties",
+      type: "unknown",
+      required: ancestorRequired,
+      nullable: true,
+      parent: modelId,
+      objectLike: true,
+      source,
+    });
+    return;
+  }
   const childSchema = asSchema(schema.additionalProperties);
   if (!childSchema) {
     return;

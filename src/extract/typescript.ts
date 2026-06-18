@@ -315,34 +315,20 @@ function addPropertyField(
   });
 
   if (options.addNested !== false) {
-    if (inlineObjectMemberGroups.length > 0) {
-      addMemberGroupsFields(
-        inlineObjectMemberGroups,
-        path,
-        modelId,
-        sourceFile,
-        sourcePath,
-        startLine,
-        modelNames,
-        fields,
-        inlineObjectDescendantRequired,
-        false,
-      );
-    }
-    if (inlineArrayObjectMemberGroups.length > 0) {
-      addMemberGroupsFields(
-        inlineArrayObjectMemberGroups,
-        `${path}[]`,
-        modelId,
-        sourceFile,
-        sourcePath,
-        startLine,
-        modelNames,
-        fields,
-        inlineArrayDescendantRequired,
-        false,
-      );
-    }
+    addNestedTypeFields(
+      typeCandidates,
+      path,
+      modelId,
+      sourceFile,
+      sourcePath,
+      startLine,
+      modelNames,
+      fields,
+      {
+        objectRequired: inlineObjectDescendantRequired,
+        arrayRequired: inlineArrayDescendantRequired,
+      },
+    );
   }
 }
 
@@ -387,9 +373,50 @@ function addMemberGroupsFields(
   overrideExisting: boolean,
 ): void {
   if (memberGroups.length === 1) {
-    for (const nested of memberGroups[0] ?? []) {
+    const group = memberGroups[0] ?? [];
+    const handledProperties = new Set<string>();
+    for (const nested of group) {
       if (ts.isPropertySignature(nested)) {
-        addPropertyFieldIfAbsent(
+        const name = propertyNameText(nested.name);
+        if (!name || handledProperties.has(name)) {
+          continue;
+        }
+        handledProperties.add(name);
+        const occurrences = group.filter((candidate): candidate is ts.PropertySignature =>
+          ts.isPropertySignature(candidate) && propertyNameText(candidate.name) === name
+        );
+        if (occurrences.length > 1) {
+          addIntersectionPropertyField(
+            occurrences,
+            nested,
+            parentPath,
+            modelId,
+            sourceFile,
+            sourcePath,
+            startLine,
+            modelNames,
+            fields,
+            {
+              ancestorRequired,
+              overrideExisting,
+            },
+          );
+        } else {
+          addPropertyFieldIfAbsent(
+            nested,
+            parentPath,
+            modelId,
+            sourceFile,
+            sourcePath,
+            startLine,
+            modelNames,
+            fields,
+            ancestorRequired,
+            overrideExisting,
+          );
+        }
+      } else if (ts.isIndexSignatureDeclaration(nested)) {
+        addIndexSignatureFieldIfAbsent(
           nested,
           parentPath,
           modelId,
@@ -471,6 +498,95 @@ function addMemberGroupsFields(
       }
     }
   }
+  const indexOccurrences = memberGroups
+    .map((group) => group.find((candidate): candidate is ts.IndexSignatureDeclaration =>
+      ts.isIndexSignatureDeclaration(candidate)
+    ))
+    .filter((candidate): candidate is ts.IndexSignatureDeclaration => Boolean(candidate));
+  if (indexOccurrences.length > 0) {
+    addUnionIndexSignatureField(
+      indexOccurrences,
+      indexOccurrences[0] as ts.IndexSignatureDeclaration,
+      parentPath,
+      modelId,
+      sourceFile,
+      sourcePath,
+      startLine,
+      modelNames,
+      fields,
+      {
+        ancestorRequired,
+        required: indexOccurrences.length === memberGroups.length,
+        overrideExisting,
+      },
+    );
+  }
+}
+
+function addIntersectionPropertyField(
+  occurrences: ts.PropertySignature[],
+  fallbackMember: ts.PropertySignature,
+  parentPath: string,
+  modelId: string,
+  sourceFile: ts.SourceFile,
+  sourcePath: string,
+  startLine: number,
+  modelNames: Set<string>,
+  fields: FieldNode[],
+  options: { ancestorRequired: boolean; overrideExisting: boolean },
+): void {
+  const name = propertyNameText(fallbackMember.name);
+  if (!name) {
+    return;
+  }
+  const path = joinFieldPath(parentPath, name);
+  if (options.overrideExisting) {
+    removeExistingPath(fields, path);
+  }
+  if (fields.some((field) => field.path === path)) {
+    return;
+  }
+  const typeNodes = occurrences.flatMap((candidate) => candidate.type ? nonNullableTypeNodes(candidate.type) : []);
+  const type = uniqueStrings(
+    occurrences.map((candidate) => candidate.type?.getText(sourceFile) ?? "unknown"),
+  ).join(" & ");
+  const ref = referencedModelFromTypeCandidates(typeNodes, sourceFile, modelNames) ?? referencedModel(type, modelNames);
+  const inlineObjectMemberGroups = occurrences.flatMap((candidate) => propertyInlineObjectMemberGroups(candidate));
+  const inlineArrayObjectMemberGroups = occurrences.flatMap((candidate) => propertyInlineArrayObjectMemberGroups(candidate));
+  const fieldRequired = options.ancestorRequired && occurrences.some((candidate) => !candidate.questionToken);
+  const fieldNullable = occurrences.length > 0 &&
+    occurrences.every((candidate) => candidate.type ? typeAllowsNullish(candidate.type) : false);
+  const objectLike = Boolean(ref) ||
+    inlineObjectMemberGroups.length > 0 ||
+    inlineArrayObjectMemberGroups.length > 0 ||
+    typeNodes.some(isRecordLikeType);
+  fields.push({
+    path,
+    name,
+    type,
+    required: fieldRequired,
+    nullable: fieldNullable,
+    parent: modelId,
+    objectLike,
+    source: spanForNode(fallbackMember, sourceFile, sourcePath, startLine),
+    ...(ref ? { ref } : {}),
+  });
+  for (const occurrence of occurrences) {
+    const occurrenceDescendantRequired = options.ancestorRequired &&
+      !occurrence.questionToken &&
+      (occurrence.type ? !typeAllowsNullish(occurrence.type) : true);
+    addNestedPropertyFields(
+      occurrence,
+      path,
+      modelId,
+      sourceFile,
+      sourcePath,
+      startLine,
+      modelNames,
+      fields,
+      occurrenceDescendantRequired,
+    );
+  }
 }
 
 function addUnionPropertyField(
@@ -514,6 +630,190 @@ function addUnionPropertyField(
     source: spanForNode(fallbackMember, sourceFile, sourcePath, startLine),
     ...(ref ? { ref } : {}),
   });
+}
+
+function addIndexSignatureFieldIfAbsent(
+  member: ts.IndexSignatureDeclaration,
+  parentPath: string,
+  modelId: string,
+  sourceFile: ts.SourceFile,
+  sourcePath: string,
+  startLine: number,
+  modelNames: Set<string>,
+  fields: FieldNode[],
+  ancestorRequired: boolean,
+  overrideExisting: boolean,
+): void {
+  const path = joinFieldPath(parentPath, "additionalProperties");
+  if (overrideExisting) {
+    removeExistingPath(fields, path);
+  }
+  if (fields.some((field) => field.path === path)) {
+    return;
+  }
+  addIndexSignatureField(member, parentPath, modelId, sourceFile, sourcePath, startLine, modelNames, fields, {
+    ancestorRequired,
+    required: true,
+  });
+}
+
+function addUnionIndexSignatureField(
+  occurrences: ts.IndexSignatureDeclaration[],
+  fallbackMember: ts.IndexSignatureDeclaration,
+  parentPath: string,
+  modelId: string,
+  sourceFile: ts.SourceFile,
+  sourcePath: string,
+  startLine: number,
+  modelNames: Set<string>,
+  fields: FieldNode[],
+  options: { ancestorRequired: boolean; required: boolean; overrideExisting: boolean },
+): void {
+  const path = joinFieldPath(parentPath, "additionalProperties");
+  if (options.overrideExisting) {
+    removeExistingPath(fields, path);
+  }
+  if (fields.some((field) => field.path === path)) {
+    return;
+  }
+  addIndexSignatureField(
+    fallbackMember,
+    parentPath,
+    modelId,
+    sourceFile,
+    sourcePath,
+    startLine,
+    modelNames,
+    fields,
+    {
+      ancestorRequired: options.ancestorRequired,
+      required: options.required,
+      typeOverride: uniqueStrings(occurrences.map((candidate) => candidate.type.getText(sourceFile))).join(" | "),
+      typeNodesOverride: occurrences.flatMap((candidate) => nonNullableTypeNodes(candidate.type)),
+    },
+  );
+}
+
+function addIndexSignatureField(
+  member: ts.IndexSignatureDeclaration,
+  parentPath: string,
+  modelId: string,
+  sourceFile: ts.SourceFile,
+  sourcePath: string,
+  startLine: number,
+  modelNames: Set<string>,
+  fields: FieldNode[],
+  options: {
+    ancestorRequired: boolean;
+    required: boolean;
+    typeOverride?: string;
+    typeNodesOverride?: ts.TypeNode[];
+  },
+): void {
+  const path = joinFieldPath(parentPath, "additionalProperties");
+  const typeNode = member.type;
+  const typeNodes = options.typeNodesOverride ?? nonNullableTypeNodes(typeNode);
+  const type = options.typeOverride ?? typeNode.getText(sourceFile);
+  const ref = referencedModelFromTypeCandidates(typeNodes, sourceFile, modelNames) ?? referencedModel(type, modelNames);
+  const inlineObjectMemberGroups = inlineObjectMemberGroupsForTypeNodes(typeNodes);
+  const inlineArrayObjectMemberGroups = inlineArrayObjectMemberGroupsForTypeNodes(typeNodes);
+  const fieldRequired = options.required && options.ancestorRequired;
+  const fieldNullable = typeAllowsNullish(typeNode);
+  const objectLike = Boolean(ref) ||
+    inlineObjectMemberGroups.length > 0 ||
+    inlineArrayObjectMemberGroups.length > 0 ||
+    typeNodes.some(isRecordLikeType);
+  fields.push({
+    path,
+    name: "additionalProperties",
+    type,
+    required: fieldRequired,
+    nullable: fieldNullable,
+    parent: modelId,
+    objectLike,
+    source: spanForNode(member, sourceFile, sourcePath, startLine),
+    ...(ref ? { ref } : {}),
+  });
+  const descendantRequired = fieldRequired && !fieldNullable;
+  addNestedTypeFields(
+    typeNodes,
+    path,
+    modelId,
+    sourceFile,
+    sourcePath,
+    startLine,
+    modelNames,
+    fields,
+    {
+      objectRequired: descendantRequired && hasOnlyInlineObjectBranches(typeNodes),
+      arrayRequired: descendantRequired && hasOnlyInlineArrayObjectBranches(typeNodes),
+    },
+  );
+}
+
+function addNestedPropertyFields(
+  member: ts.PropertySignature,
+  path: string,
+  modelId: string,
+  sourceFile: ts.SourceFile,
+  sourcePath: string,
+  startLine: number,
+  modelNames: Set<string>,
+  fields: FieldNode[],
+  ancestorRequired: boolean,
+): void {
+  const typeNodes = member.type ? nonNullableTypeNodes(member.type) : [];
+  addNestedTypeFields(typeNodes, path, modelId, sourceFile, sourcePath, startLine, modelNames, fields, ancestorRequired);
+}
+
+function addNestedTypeFields(
+  typeNodes: ts.TypeNode[],
+  path: string,
+  modelId: string,
+  sourceFile: ts.SourceFile,
+  sourcePath: string,
+  startLine: number,
+  modelNames: Set<string>,
+  fields: FieldNode[],
+  required:
+    | boolean
+    | {
+      objectRequired: boolean;
+      arrayRequired: boolean;
+    },
+): void {
+  const objectRequired = typeof required === "boolean" ? required && hasOnlyInlineObjectBranches(typeNodes) : required.objectRequired;
+  const arrayRequired = typeof required === "boolean" ? required && hasOnlyInlineArrayObjectBranches(typeNodes) : required.arrayRequired;
+  const inlineObjectMemberGroups = inlineObjectMemberGroupsForTypeNodes(typeNodes);
+  if (inlineObjectMemberGroups.length > 0) {
+    addMemberGroupsFields(
+      inlineObjectMemberGroups,
+      path,
+      modelId,
+      sourceFile,
+      sourcePath,
+      startLine,
+      modelNames,
+      fields,
+      objectRequired,
+      false,
+    );
+  }
+  const inlineArrayObjectMemberGroups = inlineArrayObjectMemberGroupsForTypeNodes(typeNodes);
+  if (inlineArrayObjectMemberGroups.length > 0) {
+    addMemberGroupsFields(
+      inlineArrayObjectMemberGroups,
+      `${path}[]`,
+      modelId,
+      sourceFile,
+      sourcePath,
+      startLine,
+      modelNames,
+      fields,
+      arrayRequired,
+      false,
+    );
+  }
 }
 
 function removeExistingPath(fields: FieldNode[], path: string): void {

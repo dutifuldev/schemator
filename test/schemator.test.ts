@@ -372,6 +372,27 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts permissive JSON Schema map values", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          additionalProperties: true,
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.type, field.objectLike, field.nullable])).toEqual([
+        ["additionalProperties", "unknown", true, true],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts JSON Schema pattern property scalar values", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -2728,6 +2749,101 @@ describe("schemator", () => {
       expect(graph.models[0]?.fields.map((field) => [field.path, field.objectLike, field.required])).toEqual([
         ["items", true, true],
         ["items[].id", false, false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("composes duplicate TypeScript intersection properties", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type User = {",
+          "  settings: {",
+          "    promptRecipe: string;",
+          "  };",
+          "} & {",
+          "  settings: {",
+          "    retries: number;",
+          "  };",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
+        ["settings", true],
+        ["settings.promptRecipe", true],
+        ["settings.retries", true],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps optional TypeScript intersection property descendants optional", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type User = {",
+          "  settings?: {",
+          "    promptRecipe: string;",
+          "  };",
+          "} & {",
+          "  settings: {",
+          "    retries: number;",
+          "  };",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required])).toEqual([
+        ["settings", true],
+        ["settings.promptRecipe", false],
+        ["settings.retries", true],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("extracts TypeScript index signatures", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Headers = {",
+          "  [name: string]: string;",
+          "};",
+          "type Registry = {",
+          "  fixed: string;",
+          "  [name: string]: {",
+          "    promptRecipe?: string;",
+          "  };",
+          "};",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+      const headers = graph.models.find((model) => model.id === "Headers");
+      const registry = graph.models.find((model) => model.id === "Registry");
+
+      expect(headers?.fields.map((field) => [field.path, field.type, field.objectLike])).toEqual([
+        ["additionalProperties", "string", false],
+      ]);
+      expect(registry?.fields.map((field) => [field.path, field.required, field.objectLike])).toEqual([
+        ["fixed", true, false],
+        ["additionalProperties", true, true],
+        ["additionalProperties.promptRecipe", false, false],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
