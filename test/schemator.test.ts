@@ -4666,6 +4666,57 @@ describe("schemator", () => {
     }
   });
 
+  test("run preserves frozen child renames after parent renames", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      const runDir = join(dir, "run");
+      const fakeCodex = join(dir, "parent-rebase-codex.js");
+      await writeParentRebaseReviewer(fakeCodex);
+      await writeFile(source, "type Policy = { config: { recipe?: string } };\n");
+
+      await execFileAsync(tsxBin(), [
+        "src/cli.ts",
+        "run",
+        "--source",
+        source,
+        "--out",
+        runDir,
+        "--max-iterations",
+        "4",
+        "--codex-command",
+        fakeCodex,
+      ], {
+        cwd: process.cwd(),
+      });
+
+      const summary = JSON.parse(await readFile(join(runDir, "run-summary.json"), "utf8")) as { stable: boolean; stableIteration: number };
+      const finalGraph = JSON.parse(await readFile(join(runDir, "graph.final.json"), "utf8")) as ModelGraph;
+      const thirdReduction = JSON.parse(await readFile(join(runDir, "reduction.iteration-3.json"), "utf8")) as {
+        changed: boolean;
+        skipped: Array<{ reason: string; fieldPath: string }>;
+      };
+      const thirdPromptFiles = await readdirFileNames(join(runDir, "jobs.iteration-3"));
+      const thirdPrompts = await Promise.all(
+        thirdPromptFiles.map((file) => readFile(join(runDir, "jobs.iteration-3", file), "utf8")),
+      );
+
+      expect(summary.stable).toBe(true);
+      expect(summary.stableIteration).toBe(3);
+      expect(finalGraph.models[0]?.fields.map((item) => item.path)).toEqual(["settings", "settings.variant"]);
+      expect(thirdReduction.changed).toBe(false);
+      expect(thirdReduction.skipped).toContainEqual({
+        decision: "rename",
+        model: "Policy",
+        fieldPath: "settings.variant",
+        reason: "frozen-rename",
+      });
+      expect(thirdPrompts.join("\n")).toContain("`Policy.config.recipe` was renamed to `settings.variant`");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("run final report uses the converged aggregate", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -6016,6 +6067,46 @@ async function writeOscillatingRenameReviewer(path: string): Promise<void> {
       "    finalType: 'string',",
       "    required: false,",
       "    rationale: 'Fake reviewer intentionally alternates between two names.',",
+      "    alternatives: [finalName, fieldName],",
+      "    simplestChoice: finalName,",
+      "    confidence: 'high',",
+      "    questions: [],",
+      "    ownerBoundary: null",
+      "  }));",
+      "});",
+    ].join("\n"),
+  );
+  await chmod(path, 0o755);
+}
+
+async function writeParentRebaseReviewer(path: string): Promise<void> {
+  await writeFile(
+    path,
+    [
+      "#!/usr/bin/env node",
+      "let prompt = '';",
+      "process.stdin.setEncoding('utf8');",
+      "process.stdin.on('data', (chunk) => { prompt += chunk; });",
+      "process.stdin.on('end', () => {",
+      "  const model = /- Model: `([^`]+)`/.exec(prompt)?.[1] ?? 'Unknown';",
+      "  const fieldPath = /- Field path: `([^`]+)`/.exec(prompt)?.[1] ?? 'unknown';",
+      "  const fieldName = /- Field name: `([^`]+)`/.exec(prompt)?.[1] ?? fieldPath;",
+      "  const hasChildRename = prompt.includes('`Policy.config.recipe` was renamed to `config.variant`') || prompt.includes('`Policy.config.recipe` was renamed to `settings.variant`');",
+      "  const shouldRenameChildFirst = fieldPath === 'config.recipe' && !prompt.includes('## Accepted Run Decisions');",
+      "  const shouldRenameParentSecond = fieldPath === 'config' && hasChildRename;",
+      "  const shouldChurnMovedChild = fieldPath === 'settings.variant';",
+      "  const decision = shouldRenameChildFirst || shouldRenameParentSecond || shouldChurnMovedChild ? 'rename' : 'keep';",
+      "  const finalName = shouldRenameChildFirst ? 'variant' : shouldRenameParentSecond ? 'settings' : shouldChurnMovedChild ? 'recipe' : fieldName;",
+      "  console.log(JSON.stringify({",
+      "    schemaVersion: 1,",
+      "    model,",
+      "    fieldPath,",
+      "    decision,",
+      "    finalName,",
+      "    finalPath: null,",
+      "    finalType: 'string',",
+      "    required: false,",
+      "    rationale: 'Fake reviewer checks rebasing frozen child rename paths after a parent rename.',",
       "    alternatives: [finalName, fieldName],",
       "    simplestChoice: finalName,",
       "    confidence: 'high',",

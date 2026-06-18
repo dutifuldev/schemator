@@ -10,6 +10,7 @@ import { extractGraph } from "./extract/index.js";
 import { readJson, readText, resolvePath, writeJson, writeText } from "./files.js";
 import {
   applyAggregateToGraph,
+  applyRenameMapToPath,
   graphDecisionKey,
   hasSimplification,
   reduceAggregateGraph,
@@ -439,6 +440,10 @@ function recordRunHistory(
   runHistory: RunHistoryEntry[],
   frozenRenamePaths: Set<string>,
 ): void {
+  const renameMaps = appliedRenameMapsByModel(reduction);
+  rebaseRunHistory(runHistory, renameMaps);
+  rebaseFrozenRenamePaths(frozenRenamePaths, renameMaps);
+
   for (const applied of reduction.applied) {
     runHistory.push({
       iteration,
@@ -451,6 +456,71 @@ function recordRunHistory(
       frozenRenamePaths.add(graphDecisionKey(applied.model, applied.finalPath));
     }
   }
+}
+
+function appliedRenameMapsByModel(reduction: GraphReduction): Map<string, Map<string, string>> {
+  const renameMaps = new Map<string, Map<string, string>>();
+  for (const applied of reduction.applied) {
+    if (applied.decision !== "rename" || applied.finalPath === undefined) {
+      continue;
+    }
+    const modelMap = renameMaps.get(applied.model) ?? new Map<string, string>();
+    modelMap.set(applied.fieldPath, applied.finalPath);
+    renameMaps.set(applied.model, modelMap);
+  }
+  return renameMaps;
+}
+
+function rebaseRunHistory(
+  runHistory: RunHistoryEntry[],
+  renameMaps: Map<string, Map<string, string>>,
+): void {
+  for (const entry of runHistory) {
+    if (entry.finalPath === undefined) {
+      continue;
+    }
+    const renameMap = renameMaps.get(entry.model);
+    if (renameMap) {
+      entry.finalPath = applyRenameMapToPath(entry.finalPath, renameMap);
+    }
+  }
+}
+
+function rebaseFrozenRenamePaths(
+  frozenRenamePaths: Set<string>,
+  renameMaps: Map<string, Map<string, string>>,
+): void {
+  if (renameMaps.size === 0 || frozenRenamePaths.size === 0) {
+    return;
+  }
+
+  const nextPaths = new Set<string>();
+  for (const key of frozenRenamePaths) {
+    const parsed = parseGraphDecisionKey(key);
+    if (!parsed) {
+      nextPaths.add(key);
+      continue;
+    }
+    const renameMap = renameMaps.get(parsed.model);
+    const fieldPath = renameMap ? applyRenameMapToPath(parsed.fieldPath, renameMap) : parsed.fieldPath;
+    nextPaths.add(graphDecisionKey(parsed.model, fieldPath));
+  }
+
+  frozenRenamePaths.clear();
+  for (const key of nextPaths) {
+    frozenRenamePaths.add(key);
+  }
+}
+
+function parseGraphDecisionKey(key: string): { model: string; fieldPath: string } | null {
+  const separator = key.indexOf("\u0000");
+  if (separator === -1) {
+    return null;
+  }
+  return {
+    model: key.slice(0, separator),
+    fieldPath: key.slice(separator + 1),
+  };
 }
 
 function reductionArtifact(reduction: GraphReduction): Omit<GraphReduction, "graph"> {
