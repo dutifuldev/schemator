@@ -87,6 +87,7 @@ function applyRenames(field: FieldNode, renameMap: Map<string, string>, renameNa
     ...field,
     path: nextPath,
     name: exactRename ? renameNames.get(field.path) ?? lastPathSegment(exactRename) : field.name,
+    type: applyRenameMapToTypeText(field.type, field.path, renameMap, renameNames),
   };
 }
 
@@ -127,4 +128,49 @@ function replacePathPrefix(path: string, from: string, to: string): string {
 
 function lastPathSegment(path: string): string {
   return path.split(".").at(-1) ?? path;
+}
+
+function applyRenameMapToTypeText(
+  type: string,
+  fieldPath: string,
+  renameMap: Map<string, string>,
+  renameNames: Map<string, string>,
+): string {
+  let next = type;
+  for (const [from, to] of renameMap) {
+    if (!isDescendantPath(from, fieldPath)) {
+      continue;
+    }
+    const oldName = unescapeFieldPathSegment(lastPathSegment(from));
+    const newName = renameNames.get(from) ?? unescapeFieldPathSegment(lastPathSegment(to));
+    next = replaceTypePropertyName(next, oldName, newName);
+  }
+  return next;
+}
+
+function isDescendantPath(path: string, parent: string): boolean {
+  return path.startsWith(`${parent}.`) || path.startsWith(`${parent}[].`);
+}
+
+function replaceTypePropertyName(type: string, oldName: string, newName: string): string {
+  const identifier = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+  if (!identifier.test(oldName) || !identifier.test(newName)) {
+    return type;
+  }
+  return type.replace(
+    new RegExp(`(^|[\\s{;,])${escapeRegExp(oldName)}(\\??\\s*:)`, "g"),
+    `$1${newName}$2`,
+  );
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function unescapeFieldPathSegment(segment: string): string {
+  return segment
+    .replace(/~3/g, "]")
+    .replace(/~2/g, "[")
+    .replace(/~1/g, ".")
+    .replace(/~0/g, "~");
 }

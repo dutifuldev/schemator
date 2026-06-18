@@ -1511,6 +1511,43 @@ describe("schemator", () => {
     }
   });
 
+  test("applies JSON Schema ref sibling constraints to nullability", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          required: ["child"],
+          properties: {
+            child: {
+              $ref: "#/$defs/MaybeChild",
+              type: "object",
+            },
+          },
+          $defs: {
+            MaybeChild: {
+              type: ["object", "null"],
+              required: ["id"],
+              properties: {
+                id: { type: "string" },
+              },
+            },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required, field.nullable])).toEqual([
+        ["child", true, false],
+        ["child.id", true, false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("propagates nullable root JSON Schema ref targets to required fields", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -4195,9 +4232,9 @@ describe("schemator", () => {
           kind: "object",
           source: sourceSpan(),
           fields: [
-            field("config", "config", "object", true),
+            field("config", "config", "{ recipe: string }", true),
             field("config.recipe", "recipe", "string", false),
-            field("items", "items", "array", true),
+            field("items", "items", "{ recipe: string }[]", true),
             field("items[].recipe", "recipe", "string", false),
           ],
         },
@@ -4226,11 +4263,19 @@ describe("schemator", () => {
       ],
     };
 
-    expect(applyAggregateToGraph(graph, aggregate).models[0]?.fields.map((item) => item.path)).toEqual([
+    const fields = applyAggregateToGraph(graph, aggregate).models[0]?.fields ?? [];
+
+    expect(fields.map((item) => item.path)).toEqual([
       "settings",
       "settings.variant",
       "entries",
       "entries[].variant",
+    ]);
+    expect(fields.map((item) => [item.path, item.type])).toEqual([
+      ["settings", "{ variant: string }"],
+      ["settings.variant", "string"],
+      ["entries", "{ variant: string }[]"],
+      ["entries[].variant", "string"],
     ]);
   });
 

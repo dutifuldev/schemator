@@ -651,7 +651,9 @@ function schemaOrRefAlwaysObject(
   refStack: Set<string>,
 ): boolean {
   if (refSchema) {
-    return schemaAlwaysObject(refSchema.value, root, withRef(refStack, refSchema.ref));
+    const siblingSchema = refSiblingValidationSchema(schema);
+    return schemaAlwaysObject(refSchema.value, root, withRef(refStack, refSchema.ref)) ||
+      Boolean(siblingSchema && schemaAlwaysObject(siblingSchema, root, refStack));
   }
   return schemaAlwaysObject(schema, root, refStack);
 }
@@ -671,9 +673,8 @@ function schemaAlwaysRequiredNestedContainer(
       schemaAlwaysObject(itemSchema.value, root, withRef(refStack, itemSchema.ref));
   }
   if (refSchema) {
-    const nestedRefStack = withRef(refStack, refSchema.ref);
-    return schemaAlwaysObject(refSchema.value, root, nestedRefStack) ||
-      schemaAlwaysArray(refSchema.value, root, nestedRefStack);
+    return schemaOrRefAlwaysObject(schema, refSchema, root, refStack) ||
+      schemaOrRefAlwaysArray(schema, refSchema, root, refStack);
   }
   return schemaAlwaysObject(schema, root, refStack);
 }
@@ -715,7 +716,9 @@ function schemaOrRefAlwaysArray(
   refStack: Set<string>,
 ): boolean {
   if (refSchema) {
-    return schemaAlwaysArray(refSchema.value, root, withRef(refStack, refSchema.ref));
+    const siblingSchema = refSiblingValidationSchema(schema);
+    return schemaAlwaysArray(refSchema.value, root, withRef(refStack, refSchema.ref)) ||
+      Boolean(siblingSchema && schemaAlwaysArray(siblingSchema, root, refStack));
   }
   return schemaAlwaysArray(schema, root, refStack);
 }
@@ -848,7 +851,27 @@ function schemaEnumAllowsNull(schema: JsonSchemaLike): boolean {
 
 function schemaOrRefAllowsNull(schema: JsonSchemaLike, refSchema: ResolvedSchema | null): boolean {
   const resolvedSchema = refSchema ? asSchema(refSchema.value) : null;
-  return schemaAllowsNull(schema) || Boolean(resolvedSchema && schemaAllowsNull(resolvedSchema));
+  if (!resolvedSchema) {
+    return schemaAllowsNull(schema);
+  }
+  const siblingSchema = refSiblingValidationSchema(schema);
+  const resolvedAllowsNull = schemaAllowsNull(resolvedSchema);
+  return siblingSchema ? resolvedAllowsNull && schemaCanAcceptNull(siblingSchema) : resolvedAllowsNull;
+}
+
+function refSiblingValidationSchema(schema: JsonSchemaLike): JsonSchemaLike | null {
+  const siblings = { ...schema };
+  delete siblings.$ref;
+  return hasSchemaValidationWork(siblings) ? siblings : null;
+}
+
+function hasSchemaValidationWork(schema: JsonSchemaLike): boolean {
+  return (
+    schema.type !== undefined ||
+    schema.enum !== undefined ||
+    schema.const !== undefined ||
+    hasSchemaWork(schema)
+  );
 }
 
 function resolveRefSchema(root: unknown, ref: string, refStack: Set<string>): ResolvedSchema | null {
