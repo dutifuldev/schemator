@@ -710,6 +710,32 @@ describe("schemator", () => {
     }
   });
 
+  test("keeps JSON Schema enum and const fields non-nullable when type excludes null", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          properties: {
+            status: { type: "string", enum: [null, "enabled"] },
+            literal: { type: "string", const: null },
+          },
+          required: ["status", "literal"],
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.nullable])).toEqual([
+        ["status", false],
+        ["literal", false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("propagates JSON Schema combinator nullability to nested required fields", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -775,6 +801,32 @@ describe("schemator", () => {
       expect(graph.models[0]?.fields.map((field) => [field.path, field.required, field.nullable])).toEqual([
         ["config", true, true],
         ["config.id", false, false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps JSON Schema allOf enum and const exclusions non-nullable", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          properties: {
+            status: { allOf: [{ enum: ["enabled"] }] },
+            literal: { allOf: [{ const: "enabled" }] },
+          },
+          required: ["status", "literal"],
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.nullable])).toEqual([
+        ["status", false],
+        ["literal", false],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -1542,6 +1594,43 @@ describe("schemator", () => {
       expect(graph.models[0]?.fields.map((field) => [field.path, field.required, field.nullable])).toEqual([
         ["child", true, false],
         ["child.id", true, false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("applies JSON Schema ref sibling enum constraints to nullability", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          required: ["child"],
+          properties: {
+            child: {
+              $ref: "#/$defs/MaybeChild",
+              enum: [{ id: "one" }],
+            },
+          },
+          $defs: {
+            MaybeChild: {
+              type: ["object", "null"],
+              required: ["id"],
+              properties: {
+                id: { type: "string" },
+              },
+            },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required, field.nullable])).toEqual([
+        ["child", true, false],
+        ["child.id", false, false],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });

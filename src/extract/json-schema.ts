@@ -796,39 +796,43 @@ function schemaTypes(value: unknown): string[] {
 }
 
 function schemaAllowsNull(schema: JsonSchemaLike): boolean {
-  if (hasSchemaType(schema, "null")) {
-    return true;
-  }
-  if (schemaEnumAllowsNull(schema) || schema.const === null) {
-    return true;
-  }
-  if (schemaTypes(schema.type).length > 0) {
+  const types = schemaTypes(schema.type);
+  if (types.length > 0 && !types.includes("null")) {
     return false;
   }
-  const nullableAlternatives = [...schemaArray(schema.anyOf), ...schemaArray(schema.oneOf)];
-  if (nullableAlternatives.some((candidate) => {
-    const candidateSchema = asSchema(candidate);
-    return Boolean(candidateSchema && schemaAllowsNull(candidateSchema));
-  })) {
-    return true;
+  if (schema.const !== undefined) {
+    return schema.const === null;
   }
-  const allOf = schemaArray(schema.allOf);
-  return allOf.length > 0 &&
-    allOf.every((candidate) => {
+  if (Array.isArray(schema.enum)) {
+    return schema.enum.includes(null);
+  }
+  const nullableAlternatives = [...schemaArray(schema.anyOf), ...schemaArray(schema.oneOf)];
+  if (nullableAlternatives.length > 0) {
+    return nullableAlternatives.some((candidate) => {
       const candidateSchema = asSchema(candidate);
       return Boolean(candidateSchema && schemaCanAcceptNull(candidateSchema));
     });
+  }
+  const allOf = schemaArray(schema.allOf);
+  if (allOf.length > 0) {
+    return allOf.every((candidate) => {
+      const candidateSchema = asSchema(candidate);
+      return Boolean(candidateSchema && schemaCanAcceptNull(candidateSchema));
+    });
+  }
+  return types.includes("null");
 }
 
 function schemaCanAcceptNull(schema: JsonSchemaLike): boolean {
-  if (hasSchemaType(schema, "null")) {
-    return true;
-  }
-  if (schemaEnumAllowsNull(schema) || schema.const === null) {
-    return true;
-  }
-  if (schemaTypes(schema.type).length > 0) {
+  const types = schemaTypes(schema.type);
+  if (types.length > 0 && !types.includes("null")) {
     return false;
+  }
+  if (schema.const !== undefined) {
+    return schema.const === null;
+  }
+  if (Array.isArray(schema.enum)) {
+    return schema.enum.includes(null);
   }
   const alternatives = [...schemaArray(schema.anyOf), ...schemaArray(schema.oneOf)];
   if (alternatives.length > 0) {
@@ -843,10 +847,6 @@ function schemaCanAcceptNull(schema: JsonSchemaLike): boolean {
       const candidateSchema = asSchema(candidate);
       return Boolean(candidateSchema && schemaCanAcceptNull(candidateSchema));
     });
-}
-
-function schemaEnumAllowsNull(schema: JsonSchemaLike): boolean {
-  return Array.isArray(schema.enum) && schema.enum.includes(null);
 }
 
 function schemaOrRefAllowsNull(schema: JsonSchemaLike, refSchema: ResolvedSchema | null): boolean {
