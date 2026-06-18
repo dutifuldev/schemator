@@ -508,6 +508,99 @@ describe("schemator", () => {
     }
   });
 
+  test("cancels in-flight Codex reviewers after a worker failure", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const fakeCodex = join(dir, "cancellable-codex.js");
+      const logPath = join(dir, "events.log");
+      const reviewsDir = join(dir, "reviews");
+      await writeFile(
+        fakeCodex,
+        [
+          "#!/usr/bin/env node",
+          "const fs = require('fs');",
+          "const logPath = process.env.SCHEMATOR_FAKE_CODEX_LOG;",
+          "let prompt = '';",
+          "process.stdin.setEncoding('utf8');",
+          "process.stdin.on('data', (chunk) => { prompt += chunk; });",
+          "process.stdin.on('end', () => {",
+          "  const fieldPath = /- Field path: `([^`]+)`/.exec(prompt)?.[1] ?? 'unknown';",
+          "  fs.appendFileSync(logPath, `start:${fieldPath}\\n`);",
+          "  if (fieldPath === 'bad') {",
+          "    setTimeout(() => {",
+          "      fs.appendFileSync(logPath, 'fail:bad\\n');",
+          "      process.exit(1);",
+          "    }, 200);",
+          "    return;",
+          "  }",
+          "  process.on('SIGTERM', () => {",
+          "    fs.appendFileSync(logPath, `terminated:${fieldPath}\\n`);",
+          "    process.exit(0);",
+          "  });",
+          "  setTimeout(() => {",
+          "    console.log(JSON.stringify({",
+          "      schemaVersion: 1,",
+          "      model: 'Policy',",
+          "      fieldPath,",
+          "      decision: 'keep',",
+          "      finalName: fieldPath,",
+          "      finalPath: null,",
+          "      finalType: 'string',",
+          "      required: false,",
+          "      rationale: 'slow success',",
+          "      alternatives: [fieldPath],",
+          "      simplestChoice: fieldPath,",
+          "      confidence: 'high',",
+          "      questions: [],",
+          "      ownerBoundary: null",
+          "    }));",
+          "  }, 10000);",
+          "});",
+        ].join("\n"),
+      );
+      await chmod(fakeCodex, 0o755);
+      const graph: ModelGraph = {
+        schemaVersion: 1,
+        source: { path: "schema.ts", revision: null },
+        models: [
+          {
+            id: "Policy",
+            kind: "object",
+            source: { path: "schema.ts", span: { startLine: 1, endLine: 4 } },
+            fields: [
+              fieldForModel("Policy", "bad", "bad"),
+              fieldForModel("Policy", "slow", "slow"),
+            ],
+          },
+        ],
+      };
+      const originalLog = process.env["SCHEMATOR_FAKE_CODEX_LOG"];
+      process.env["SCHEMATOR_FAKE_CODEX_LOG"] = logPath;
+      try {
+        await expect(
+          writeCodexReviews(graph, reviewsDir, {
+            command: fakeCodex,
+            timeoutMs: 5_000,
+            concurrency: 2,
+          }),
+        ).rejects.toThrow(/exited with 1|aborted/);
+      } finally {
+        if (originalLog === undefined) {
+          delete process.env["SCHEMATOR_FAKE_CODEX_LOG"];
+        } else {
+          process.env["SCHEMATOR_FAKE_CODEX_LOG"] = originalLog;
+        }
+      }
+
+      const log = await readFile(logPath, "utf8");
+      expect(log).toContain("start:bad");
+      expect(log).toContain("start:slow");
+      expect(log).toContain("terminated:slow");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("aggregates JSON Schema reviews and keeps nested coverage valid", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -5794,6 +5887,19 @@ function graphWithOneField(modelId: string, path: string, name: string): ModelGr
         ],
       },
     ],
+  };
+}
+
+function fieldForModel(modelId: string, path: string, name: string) {
+  return {
+    path,
+    name,
+    type: "string",
+    required: false,
+    nullable: false,
+    parent: modelId,
+    objectLike: false,
+    source: { path: "schema.ts", span: { startLine: 2, endLine: 2 } },
   };
 }
 

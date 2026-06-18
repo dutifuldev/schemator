@@ -25,16 +25,18 @@ export async function writeCodexReviews(
   const jobs = graph.models.flatMap((model) => model.fields.map((field) => ({ model, field })));
   const reviews = new Array<FieldReview>(jobs.length);
   let cursor = 0;
+  let firstError: unknown;
+  const abortController = new AbortController();
   const workerCount = Math.min(Math.max(1, options.concurrency ?? 4), Math.max(1, jobs.length));
-  await Promise.all(
-    Array.from({ length: workerCount }, async () => {
-      while (cursor < jobs.length) {
-        const index = cursor;
-        cursor += 1;
-        const job = jobs[index];
-        if (!job) {
-          continue;
-        }
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (!abortController.signal.aborted && cursor < jobs.length) {
+      const index = cursor;
+      cursor += 1;
+      const job = jobs[index];
+      if (!job) {
+        continue;
+      }
+      try {
         const { model, field } = job;
         const prompt = renderFieldPrompt(
           graph,
@@ -45,7 +47,11 @@ export async function writeCodexReviews(
             ...(options.runHistory === undefined ? {} : { runHistory: options.runHistory }),
           },
         );
-        const review = bindReviewIdentity(await runCodexFieldReview(prompt, options), model.id, field.path);
+        const review = bindReviewIdentity(
+          await runCodexFieldReview(prompt, options, abortController.signal),
+          model.id,
+          field.path,
+        );
         const validation = validateFieldReview(review);
         if (!validation.ok) {
           throw new Error(
@@ -55,9 +61,18 @@ export async function writeCodexReviews(
         reviews[index] = review;
         const fileName = `${pathToFileNamePart(model.id)}.${pathToFileNamePart(field.path)}.review.json`;
         await writeJson(join(outputDir, fileName), review);
+      } catch (error) {
+        firstError ??= error;
+        abortController.abort();
+        throw error;
       }
-    }),
-  );
+    }
+  });
+  try {
+    await Promise.all(workers);
+  } catch (error) {
+    throw firstError ?? error;
+  }
   for (const review of reviews) {
     if (!review) {
       throw new Error("Codex review worker finished without writing every review.");
@@ -74,7 +89,11 @@ function bindReviewIdentity(review: FieldReview, model: string, fieldPath: strin
   };
 }
 
-async function runCodexFieldReview(prompt: string, options: CodexReviewOptions): Promise<FieldReview> {
+async function runCodexFieldReview(
+  prompt: string,
+  options: CodexReviewOptions,
+  signal?: AbortSignal,
+): Promise<FieldReview> {
   const command = options.command ?? "codex";
   const args = [
     "--ask-for-approval",
@@ -93,6 +112,7 @@ async function runCodexFieldReview(prompt: string, options: CodexReviewOptions):
   const output = await execWithInput(command, args, prompt, {
     cwd: options.cwd ?? process.cwd(),
     timeoutMs: options.timeoutMs ?? 120_000,
+    ...(signal === undefined ? {} : { signal }),
   });
   return parseFieldReviewOutput(output);
 }
@@ -105,19 +125,49 @@ function execWithInput(
   command: string,
   args: string[],
   input: string,
-  options: { cwd: string; timeoutMs: number },
+  options: { cwd: string; timeoutMs: number; signal?: AbortSignal },
 ): Promise<string> {
   return new Promise((resolve, reject) => {
+    if (options.signal?.aborted) {
+      reject(new Error(`${command} aborted before start`));
+      return;
+    }
     const child = spawn(command, args, {
       cwd: options.cwd,
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
+    let settled = false;
+    const cleanup = (): void => {
+      clearTimeout(timer);
+      options.signal?.removeEventListener("abort", abort);
+    };
+    const fail = (error: Error): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const succeed = (output: string): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve(output);
+    };
+    const abort = (): void => {
+      child.kill("SIGTERM");
+      fail(new Error(`${command} aborted`));
+    };
     const timer = setTimeout(() => {
       child.kill("SIGTERM");
-      reject(new Error(`${command} timed out after ${options.timeoutMs}ms`));
+      fail(new Error(`${command} timed out after ${options.timeoutMs}ms`));
     }, options.timeoutMs);
+    options.signal?.addEventListener("abort", abort, { once: true });
 
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
@@ -128,16 +178,14 @@ function execWithInput(
       stderr += chunk;
     });
     child.on("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
+      fail(error);
     });
     child.on("close", (code) => {
-      clearTimeout(timer);
       if (code !== 0) {
-        reject(new Error(`${command} exited with ${code ?? "unknown"}:\n${stderr || stdout}`));
+        fail(new Error(`${command} exited with ${code ?? "unknown"}:\n${stderr || stdout}`));
         return;
       }
-      resolve(stdout);
+      succeed(stdout);
     });
     child.stdin.end(input);
   });
