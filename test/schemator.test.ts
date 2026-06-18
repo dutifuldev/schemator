@@ -49,6 +49,22 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts TypeScript module source extensions", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      for (const extension of [".mts", ".cts"]) {
+        const source = join(dir, `schema${extension}`);
+        await writeFile(source, "type Policy = { id: string };\n");
+        const graph = await extractGraph(source);
+
+        expect(graph.models.map((model) => model.id)).toEqual(["Policy"]);
+        expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["id"]);
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("merges duplicate TypeScript model declarations inside Markdown", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -1714,6 +1730,40 @@ describe("schemator", () => {
 
       expect(graph.models[0]?.fields.map((field) => field.path)).toEqual(["policy", "policy.promptRecipe"]);
       expect(graph.models[0]?.fields[0]?.objectLike).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("extracts URI-escaped JSON Schema local ref object fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.json");
+      await writeFile(
+        source,
+        JSON.stringify({
+          type: "object",
+          properties: {
+            policy: {
+              $ref: "#/$defs/policy%20schema",
+            },
+          },
+          $defs: {
+            "policy schema": {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+              },
+            },
+          },
+        }),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.objectLike])).toEqual([
+        ["policy", true],
+        ["policy.id", false],
+      ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

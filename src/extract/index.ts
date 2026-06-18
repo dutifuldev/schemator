@@ -48,7 +48,7 @@ function extractDirectModels(
   extension: string,
   source: SourceSpan,
 ): ModelNode[] {
-  if (extension === ".ts" || extension === ".tsx") {
+  if (isTypeScriptExtension(extension)) {
     return mergeDuplicateTypeScriptModels(extractTypeScriptModels(text, sourcePath, 1));
   }
   if (extension === ".json") {
@@ -60,6 +60,10 @@ function extractDirectModels(
     return [jsonLikeToModel(parsed, "YamlDocument", source)];
   }
   return [];
+}
+
+function isTypeScriptExtension(extension: string): boolean {
+  return extension === ".ts" || extension === ".tsx" || extension === ".mts" || extension === ".cts";
 }
 
 function extractMarkdownModels(text: string, sourcePath: string): ModelNode[] {

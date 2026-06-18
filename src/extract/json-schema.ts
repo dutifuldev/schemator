@@ -925,13 +925,24 @@ function resolveLocalRef(root: unknown, ref: string): unknown | null {
   }
   let current: unknown = root;
   for (const rawSegment of ref.slice(2).split("/")) {
-    const segment = rawSegment.replace(/~1/g, "/").replace(/~0/g, "~");
+    const segment = decodeLocalRefSegment(rawSegment);
+    if (segment === null) {
+      return null;
+    }
     if (!isRecord(current) || !(segment in current)) {
       return null;
     }
     current = current[segment];
   }
   return current;
+}
+
+function decodeLocalRefSegment(rawSegment: string): string | null {
+  try {
+    return decodeURIComponent(rawSegment).replace(/~1/g, "/").replace(/~0/g, "~");
+  } catch {
+    return null;
+  }
 }
 
 function withRef(refStack: Set<string>, ref: string | undefined): Set<string> {
