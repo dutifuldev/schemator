@@ -3,29 +3,105 @@ import { parentFieldPath, replaceLastFieldPathSegment } from "./field-path.js";
 
 const simplifyingDecisions = new Set(["rename", "derive", "defer", "remove"]);
 
+export type GraphReductionOptions = {
+  frozenRenamePaths?: ReadonlySet<string>;
+};
+
+export type AppliedGraphDecision = {
+  decision: "rename" | "remove" | "derive" | "defer";
+  model: string;
+  fieldPath: string;
+  finalPath?: string;
+};
+
+export type SkippedGraphDecision = {
+  decision: FieldReview["decision"];
+  model: string;
+  fieldPath: string;
+  reason: "manual" | "no-op" | "frozen-rename" | "rename-conflict" | "removal-conflict" | "low-confidence";
+};
+
+export type GraphReduction = {
+  graph: ModelGraph;
+  changed: boolean;
+  applied: AppliedGraphDecision[];
+  skipped: SkippedGraphDecision[];
+};
+
 export function hasSimplification(aggregate: AggregateReview): boolean {
   return aggregate.decisions.some((review) => review.confidence !== "low" && isGraphChangingSimplification(review));
 }
 
-export function applyAggregateToGraph(graph: ModelGraph, aggregate: AggregateReview): ModelGraph {
+export function hasGraphChange(
+  graph: ModelGraph,
+  aggregate: AggregateReview,
+  options: GraphReductionOptions = {},
+): boolean {
+  return reduceAggregateGraph(graph, aggregate, options).changed;
+}
+
+export function applyAggregateToGraph(
+  graph: ModelGraph,
+  aggregate: AggregateReview,
+  options: GraphReductionOptions = {},
+): ModelGraph {
+  return reduceAggregateGraph(graph, aggregate, options).graph;
+}
+
+export function reduceAggregateGraph(
+  graph: ModelGraph,
+  aggregate: AggregateReview,
+  options: GraphReductionOptions = {},
+): GraphReduction {
   const decisionsByModel = new Map<string, AggregateReview["decisions"]>();
   for (const decision of aggregate.decisions) {
     const list = decisionsByModel.get(decision.model) ?? [];
     list.push(decision);
     decisionsByModel.set(decision.model, list);
   }
+  const applied: AppliedGraphDecision[] = [];
+  const skipped: SkippedGraphDecision[] = [];
 
-  return {
+  const nextGraph = {
     ...graph,
     models: graph.models.map((model) => {
       const decisions = decisionsByModel.get(model.id) ?? [];
-      const removed = new Set(
-        decisions
-          .filter((decision) => isAutoApplicableRemoval(decision, decisions))
-          .map((decision) => decision.fieldPath),
-      );
+      const removed = new Set<string>();
+      for (const decision of decisions) {
+        if (isManualStructuralProposal(decision)) {
+          skipped.push(skippedDecision(decision, "manual"));
+          continue;
+        }
+        if (decision.confidence === "low" && isGraphChangingSimplification(decision)) {
+          skipped.push(skippedDecision(decision, "low-confidence"));
+          continue;
+        }
+        if (!isRemovalDecision(decision)) {
+          continue;
+        }
+        if (isAutoApplicableRemoval(decision, decisions)) {
+          removed.add(decision.fieldPath);
+          applied.push({
+            decision: decision.decision,
+            model: decision.model,
+            fieldPath: decision.fieldPath,
+          });
+        } else {
+          skipped.push(skippedDecision(decision, "removal-conflict"));
+        }
+      }
       const activeFields = model.fields.filter((field) => !isRemoved(field.path, removed));
-      const renameMap = applicableRenameMap(activeFields, decisions);
+      const renameResult = applicableRenameMap(activeFields, decisions, options);
+      const renameMap = renameResult.renameMap;
+      skipped.push(...renameResult.skipped);
+      for (const [fieldPath, finalPath] of renameMap.entries()) {
+        applied.push({
+          decision: "rename",
+          model: model.id,
+          fieldPath,
+          finalPath: applyRenameMapToPath(fieldPath, renameMap),
+        });
+      }
       const renameNames = applicableRenameNames(decisions, renameMap);
       const fields = model.fields
         .filter((field) => !isRemoved(field.path, removed))
@@ -37,18 +113,44 @@ export function applyAggregateToGraph(graph: ModelGraph, aggregate: AggregateRev
       };
     }),
   };
+
+  return {
+    graph: nextGraph,
+    changed: applied.length > 0,
+    applied,
+    skipped,
+  };
 }
 
-function applicableRenameMap(fields: FieldNode[], decisions: AggregateReview["decisions"]): Map<string, string> {
+export function graphDecisionKey(model: string, fieldPath: string): string {
+  return `${model}\u0000${fieldPath}`;
+}
+
+function applicableRenameMap(
+  fields: FieldNode[],
+  decisions: AggregateReview["decisions"],
+  options: GraphReductionOptions,
+): { renameMap: Map<string, string>; skipped: SkippedGraphDecision[] } {
   const renameMap = new Map<string, string>();
+  const skipped: SkippedGraphDecision[] = [];
   for (const decision of sortedRenameDecisions(decisions)) {
+    if (finalPathForRename(decision) === decision.fieldPath) {
+      skipped.push(skippedDecision(decision, "no-op"));
+      continue;
+    }
+    if (options.frozenRenamePaths?.has(graphDecisionKey(decision.model, decision.fieldPath))) {
+      skipped.push(skippedDecision(decision, "frozen-rename"));
+      continue;
+    }
     const candidateMap = new Map(renameMap);
     candidateMap.set(decision.fieldPath, finalPathForRename(decision));
     if (hasUniquePaths(fields.map((field) => applyRenameMapToPath(field.path, candidateMap)))) {
       renameMap.set(decision.fieldPath, finalPathForRename(decision));
+    } else {
+      skipped.push(skippedDecision(decision, "rename-conflict"));
     }
   }
-  return renameMap;
+  return { renameMap, skipped };
 }
 
 function applicableRenameNames(
@@ -85,7 +187,7 @@ function hasUniquePaths(paths: string[]): boolean {
 function isAutoApplicableRemoval(decision: FieldReview, decisions: AggregateReview["decisions"]): boolean {
   return (
     decision.confidence !== "low" &&
-    (decision.decision === "remove" || decision.decision === "derive" || decision.decision === "defer") &&
+    isRemovalDecision(decision) &&
     !decisions.some((candidate) =>
       candidate.model === decision.model &&
       candidate.fieldPath !== decision.fieldPath &&
@@ -95,6 +197,25 @@ function isAutoApplicableRemoval(decision: FieldReview, decisions: AggregateRevi
       candidate.decision !== "defer"
     )
   );
+}
+
+function isRemovalDecision(
+  decision: FieldReview,
+): decision is FieldReview & { decision: "remove" | "derive" | "defer" } {
+  return decision.decision === "remove" || decision.decision === "derive" || decision.decision === "defer";
+}
+
+function isManualStructuralProposal(decision: FieldReview): boolean {
+  return decision.decision === "merge" || decision.decision === "move";
+}
+
+function skippedDecision(decision: FieldReview, reason: SkippedGraphDecision["reason"]): SkippedGraphDecision {
+  return {
+    decision: decision.decision,
+    model: decision.model,
+    fieldPath: decision.fieldPath,
+    reason,
+  };
 }
 
 function isRemoved(path: string, removed: Set<string>): boolean {

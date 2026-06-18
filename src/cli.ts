@@ -8,8 +8,15 @@ import { renderPatchPlan } from "./apply.js";
 import { writeCodexReviews } from "./codex-review.js";
 import { extractGraph } from "./extract/index.js";
 import { readJson, readText, resolvePath, writeJson, writeText } from "./files.js";
-import { applyAggregateToGraph, hasSimplification } from "./graph.js";
-import { writeReviewJobs } from "./jobs.js";
+import {
+  applyAggregateToGraph,
+  applyRenameMapToPath,
+  graphDecisionKey,
+  hasSimplification,
+  reduceAggregateGraph,
+  type GraphReduction,
+} from "./graph.js";
+import { writeReviewJobs, type FieldPromptOptions, type RunHistoryEntry } from "./jobs.js";
 import { renderReport } from "./report.js";
 import { writeDeterministicReviews } from "./review.js";
 import type { AggregateReview, ModelGraph } from "./types.js";
@@ -60,6 +67,7 @@ program
   .option("--codex-command <path>", "Codex executable for --strategy codex", "codex")
   .option("--codex-model <name>", "Codex model for --strategy codex")
   .option("--codex-timeout-ms <n>", "per-field Codex timeout in milliseconds", "120000")
+  .option("--codex-concurrency <n>", "maximum concurrent Codex reviewers", "4")
   .action(async (options: ReviewCommandOptions) => {
     await runCommand(async () => {
       const graph = assertModelGraph(await readJson(resolvePath(options.graph)));
@@ -168,6 +176,7 @@ program
   .option("--codex-command <path>", "Codex executable for --strategy codex", "codex")
   .option("--codex-model <name>", "Codex model for --strategy codex")
   .option("--codex-timeout-ms <n>", "per-field Codex timeout in milliseconds", "120000")
+  .option("--codex-concurrency <n>", "maximum concurrent Codex reviewers", "4")
   .action(async (options: RunCommandOptions) => {
     await runCommand(async () => {
       const source = resolvePath(options.source);
@@ -186,6 +195,9 @@ program
       let lastAggregate: AggregateReview | null = null;
       let invalidAggregate: AggregateReview | null = null;
       const aggregates: AggregateReview[] = [];
+      const runHistory: RunHistoryEntry[] = [];
+      const frozenRenamePaths = new Set<string>();
+      let lastReduction: GraphReduction | null = null;
       let stableIteration = 0;
 
       for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
@@ -193,17 +205,19 @@ program
         const reviewsDir = join(out, `reviews.iteration-${iteration}`);
         const jobsDir = join(out, `jobs.iteration-${iteration}`);
         const aggregatePath = join(out, `aggregate.iteration-${iteration}.json`);
+        const reductionPath = join(out, `reduction.iteration-${iteration}.json`);
         await writeJson(graphPath, graph);
-        await writeReviewJobs(graph, jobsDir, reviewContextOptions(projectContext));
+        const reviewOptions = reviewContextOptions(projectContext, runHistory);
+        await writeReviewJobs(graph, jobsDir, reviewOptions);
         if (options.strategy === "codex") {
           await writeCodexReviews(graph, reviewsDir, {
             ...codexOptions(options),
-            ...reviewContextOptions(projectContext),
+            ...reviewOptions,
           });
         } else if (options.strategy === "local") {
           await writeDeterministicReviews(graph, reviewsDir, {
             strategy: "local",
-            ...reviewContextOptions(projectContext),
+            ...reviewOptions,
           });
         } else {
           unsupportedStrategy(options.strategy);
@@ -219,10 +233,14 @@ program
           invalidAggregate = aggregate;
           break;
         }
-        if (!hasSimplification(aggregate)) {
+        const reduction = reduceAggregateGraph(graph, aggregate, { frozenRenamePaths });
+        lastReduction = reduction;
+        await writeJson(reductionPath, reductionArtifact(reduction));
+        if (!reduction.changed) {
           break;
         }
-        graph = applyAggregateToGraph(graph, aggregate);
+        recordRunHistory(iteration, reduction, runHistory, frozenRenamePaths);
+        graph = reduction.graph;
       }
 
       await writeJson(join(out, "graph.final.json"), graph);
@@ -236,7 +254,7 @@ program
             schemaVersion: 1,
             source,
             stableIteration,
-            stable: lastAggregate ? lastAggregate.ok && !hasSimplification(lastAggregate) : false,
+            stable: lastAggregate ? lastAggregate.ok && lastReduction !== null && !lastReduction.changed : false,
             finalGraph: "graph.final.json",
             finalReport: "final-report.md",
             ...(projectContext !== undefined
@@ -255,7 +273,7 @@ program
           `aggregate validation failed at iteration ${stableIteration}: ${invalidAggregate.findings.map((finding) => finding.message).join("; ")}`,
         );
       }
-      if (lastAggregate && hasSimplification(lastAggregate)) {
+      if (lastAggregate?.ok && lastReduction?.changed) {
         throw new Error(`run stopped before convergence after ${stableIteration} iteration(s)`);
       }
     });
@@ -272,6 +290,7 @@ type ReviewCommandOptions = {
   codexCommand: string;
   codexModel?: string;
   codexTimeoutMs: string;
+  codexConcurrency: string;
 };
 
 type RunCommandOptions = {
@@ -283,21 +302,30 @@ type RunCommandOptions = {
   codexCommand: string;
   codexModel?: string;
   codexTimeoutMs: string;
+  codexConcurrency: string;
 };
 
-function codexOptions(options: Pick<ReviewCommandOptions, "codexCommand" | "codexModel" | "codexTimeoutMs">): {
+function codexOptions(
+  options: Pick<ReviewCommandOptions, "codexCommand" | "codexModel" | "codexTimeoutMs" | "codexConcurrency">,
+): {
   command: string;
   model?: string;
   timeoutMs: number;
+  concurrency: number;
 } {
   const timeoutMs = Number.parseInt(options.codexTimeoutMs, 10);
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
     throw new Error("--codex-timeout-ms must be a positive integer");
   }
+  const concurrency = Number.parseInt(options.codexConcurrency, 10);
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    throw new Error("--codex-concurrency must be a positive integer");
+  }
   return {
     command: options.codexCommand,
     ...(options.codexModel ? { model: options.codexModel } : {}),
     timeoutMs,
+    concurrency,
   };
 }
 
@@ -318,8 +346,14 @@ async function readProjectContext(path: string | undefined): Promise<string | un
   }
 }
 
-function reviewContextOptions(projectContext: string | undefined): { projectContext?: string } {
-  return projectContext === undefined ? {} : { projectContext };
+function reviewContextOptions(
+  projectContext: string | undefined,
+  runHistory: RunHistoryEntry[] = [],
+): FieldPromptOptions {
+  return {
+    ...(projectContext === undefined ? {} : { projectContext }),
+    ...(runHistory.length === 0 ? {} : { runHistory }),
+  };
 }
 
 function sha256(value: string): string {
@@ -398,6 +432,103 @@ function deriveFinalGraph(graph: ModelGraph, aggregates: AggregateReview[]): Mod
     next = applyAggregateToGraph(next, aggregate);
   }
   return next;
+}
+
+function recordRunHistory(
+  iteration: number,
+  reduction: GraphReduction,
+  runHistory: RunHistoryEntry[],
+  frozenRenamePaths: Set<string>,
+): void {
+  const renameMaps = appliedRenameMapsByModel(reduction);
+  rebaseRunHistory(runHistory, renameMaps);
+  rebaseFrozenRenamePaths(frozenRenamePaths, renameMaps);
+
+  for (const applied of reduction.applied) {
+    runHistory.push({
+      iteration,
+      model: applied.model,
+      fieldPath: applied.fieldPath,
+      decision: applied.decision,
+      ...(applied.finalPath === undefined ? {} : { finalPath: applied.finalPath }),
+    });
+    if (applied.decision === "rename" && applied.finalPath !== undefined) {
+      frozenRenamePaths.add(graphDecisionKey(applied.model, applied.finalPath));
+    }
+  }
+}
+
+function appliedRenameMapsByModel(reduction: GraphReduction): Map<string, Map<string, string>> {
+  const renameMaps = new Map<string, Map<string, string>>();
+  for (const applied of reduction.applied) {
+    if (applied.decision !== "rename" || applied.finalPath === undefined) {
+      continue;
+    }
+    const modelMap = renameMaps.get(applied.model) ?? new Map<string, string>();
+    modelMap.set(applied.fieldPath, applied.finalPath);
+    renameMaps.set(applied.model, modelMap);
+  }
+  return renameMaps;
+}
+
+function rebaseRunHistory(
+  runHistory: RunHistoryEntry[],
+  renameMaps: Map<string, Map<string, string>>,
+): void {
+  for (const entry of runHistory) {
+    if (entry.finalPath === undefined) {
+      continue;
+    }
+    const renameMap = renameMaps.get(entry.model);
+    if (renameMap) {
+      entry.finalPath = applyRenameMapToPath(entry.finalPath, renameMap);
+    }
+  }
+}
+
+function rebaseFrozenRenamePaths(
+  frozenRenamePaths: Set<string>,
+  renameMaps: Map<string, Map<string, string>>,
+): void {
+  if (renameMaps.size === 0 || frozenRenamePaths.size === 0) {
+    return;
+  }
+
+  const nextPaths = new Set<string>();
+  for (const key of frozenRenamePaths) {
+    const parsed = parseGraphDecisionKey(key);
+    if (!parsed) {
+      nextPaths.add(key);
+      continue;
+    }
+    const renameMap = renameMaps.get(parsed.model);
+    const fieldPath = renameMap ? applyRenameMapToPath(parsed.fieldPath, renameMap) : parsed.fieldPath;
+    nextPaths.add(graphDecisionKey(parsed.model, fieldPath));
+  }
+
+  frozenRenamePaths.clear();
+  for (const key of nextPaths) {
+    frozenRenamePaths.add(key);
+  }
+}
+
+function parseGraphDecisionKey(key: string): { model: string; fieldPath: string } | null {
+  const separator = key.indexOf("\u0000");
+  if (separator === -1) {
+    return null;
+  }
+  return {
+    model: key.slice(0, separator),
+    fieldPath: key.slice(separator + 1),
+  };
+}
+
+function reductionArtifact(reduction: GraphReduction): Omit<GraphReduction, "graph"> {
+  return {
+    changed: reduction.changed,
+    applied: reduction.applied,
+    skipped: reduction.skipped,
+  };
 }
 
 function emptySummary(): AggregateReview["summary"] {

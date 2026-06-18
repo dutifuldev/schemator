@@ -70,12 +70,12 @@ export function aggregateReviews(graph: ModelGraph, reviews: FieldReview[]): Agg
         });
         continue;
       }
-      if (field.objectLike && review.decision !== "opaque" && !hasNestedCoverage(graph, model.id, field.path, field.ref)) {
+      if (field.objectLike && needsObjectBoundary(review) && !hasNestedCoverage(graph, model.id, field.path, field.ref)) {
         findings.push({
           severity: "error",
           model: model.id,
           fieldPath: field.path,
-          message: "Object-like field needs nested field reviews or an explicit opaque decision.",
+          message: "Object-like field needs nested field reviews, a removal-like simplification, or an explicit owner boundary.",
         });
       }
       if (review.decision === "opaque" && !review.ownerBoundary?.trim()) {
@@ -205,6 +205,10 @@ function isSimplifyingDecision(decision: Decision): boolean {
 
 function isRemovalLikeDecision(decision: Decision): boolean {
   return decision === "remove" || decision === "derive" || decision === "defer";
+}
+
+function needsObjectBoundary(review: FieldReview): boolean {
+  return review.decision !== "opaque" && !isRemovalLikeDecision(review.decision) && !review.ownerBoundary?.trim();
 }
 
 function isDescendantPath(path: string, parent: string): boolean {

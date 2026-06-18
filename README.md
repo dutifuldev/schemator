@@ -41,9 +41,12 @@ schemator run --strategy local --source schema.ts --out .schemator-smoke
 ```
 
 `codex` is the default review strategy. It starts one independent `codex exec`
-reviewer per field, constrains the answer with
+reviewer per field, runs up to four reviewers concurrently by default, constrains the answer with
 `schemas/field-review.schema.json`, and validates each returned review before
 writing it.
+
+Use `--codex-concurrency <n>` to raise or lower concurrent Codex reviewers for a
+run.
 
 `local` is a conservative deterministic fallback for smoke tests. It does not
 make semantic field-specific rename or removal decisions.

@@ -10,7 +10,7 @@ import { renderPatchPlan } from "../src/apply.js";
 import { writeCodexReviews } from "../src/codex-review.js";
 import { extractGraph } from "../src/extract/index.js";
 import { pathToFileNamePart } from "../src/files.js";
-import { applyAggregateToGraph, hasSimplification } from "../src/graph.js";
+import { applyAggregateToGraph, graphDecisionKey, hasGraphChange, hasSimplification, reduceAggregateGraph } from "../src/graph.js";
 import { renderFieldPrompt, writeReviewJobs } from "../src/jobs.js";
 import { renderReport } from "../src/report.js";
 import { writeDeterministicReviews } from "../src/review.js";
@@ -301,6 +301,32 @@ describe("schemator", () => {
     }
   });
 
+  test("includes accepted run decisions in generated field prompts", () => {
+    const graph = graphWithOneField("Policy", "systemPromptVariant", "systemPromptVariant");
+    const model = graph.models[0];
+    const field = model?.fields[0];
+    if (!model || !field) {
+      throw new Error("test graph has no field");
+    }
+
+    const prompt = renderFieldPrompt(graph, model, field, {
+      runHistory: [
+        {
+          iteration: 1,
+          model: "Policy",
+          fieldPath: "promptRecipe",
+          decision: "rename",
+          finalPath: "systemPromptVariant",
+        },
+      ],
+    });
+
+    expect(prompt).toContain("## Accepted Run Decisions");
+    expect(prompt).toContain("`Policy.promptRecipe` was renamed to `systemPromptVariant`");
+    expect(prompt).toContain("avoid synonym churn");
+    expect(prompt.indexOf("## Accepted Run Decisions")).toBeLessThan(prompt.indexOf("## Field Under Review"));
+  });
+
   test("omits project context section when no context is supplied", async () => {
     const graph = graphWithOneField("Policy", "id", "id");
     const prompt = await promptForGraph(graph);
@@ -420,6 +446,161 @@ describe("schemator", () => {
     }
   });
 
+  test("passes accepted run decisions through the Codex review adapter", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const fakeCodex = join(dir, "fake-codex.js");
+      const reviewsDir = join(dir, "reviews");
+      await writeFile(
+        fakeCodex,
+        [
+          "#!/usr/bin/env node",
+          "let prompt = '';",
+          "process.stdin.setEncoding('utf8');",
+          "process.stdin.on('data', (chunk) => { prompt += chunk; });",
+          "process.stdin.on('end', () => {",
+          "  if (!prompt.includes('## Accepted Run Decisions')) {",
+          "    console.error('missing run history');",
+          "    process.exit(1);",
+          "  }",
+          "  const model = /- Model: `([^`]+)`/.exec(prompt)?.[1] ?? 'Unknown';",
+          "  const fieldPath = /- Field path: `([^`]+)`/.exec(prompt)?.[1] ?? 'unknown';",
+          "  const fieldName = /- Field name: `([^`]+)`/.exec(prompt)?.[1] ?? fieldPath;",
+          "  console.log(JSON.stringify({",
+          "    schemaVersion: 1,",
+          "    model,",
+          "    fieldPath,",
+          "    decision: 'keep',",
+          "    finalName: fieldName,",
+          "    finalPath: null,",
+          "    finalType: 'string',",
+          "    required: false,",
+          "    rationale: 'Fake reviewer received run history.',",
+          "    alternatives: [fieldName, 'remove'],",
+          "    simplestChoice: fieldName,",
+          "    confidence: 'high',",
+          "    questions: [],",
+          "    ownerBoundary: null",
+          "  }));",
+          "});",
+        ].join("\n"),
+      );
+      await chmod(fakeCodex, 0o755);
+      const graph = graphWithOneField("Policy", "systemPromptVariant", "systemPromptVariant");
+
+      const reviews = await writeCodexReviews(graph, reviewsDir, {
+        command: fakeCodex,
+        timeoutMs: 5_000,
+        runHistory: [
+          {
+            iteration: 1,
+            model: "Policy",
+            fieldPath: "promptRecipe",
+            decision: "rename",
+            finalPath: "systemPromptVariant",
+          },
+        ],
+      });
+
+      expect(reviews[0]?.rationale).toBe("Fake reviewer received run history.");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("cancels in-flight Codex reviewers after a worker failure", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const fakeCodex = join(dir, "cancellable-codex.js");
+      const logPath = join(dir, "events.log");
+      const reviewsDir = join(dir, "reviews");
+      await writeFile(
+        fakeCodex,
+        [
+          "#!/usr/bin/env node",
+          "const fs = require('fs');",
+          "const logPath = process.env.SCHEMATOR_FAKE_CODEX_LOG;",
+          "let prompt = '';",
+          "process.stdin.setEncoding('utf8');",
+          "process.stdin.on('data', (chunk) => { prompt += chunk; });",
+          "process.stdin.on('end', () => {",
+          "  const fieldPath = /- Field path: `([^`]+)`/.exec(prompt)?.[1] ?? 'unknown';",
+          "  fs.appendFileSync(logPath, `start:${fieldPath}\\n`);",
+          "  if (fieldPath === 'bad') {",
+          "    setTimeout(() => {",
+          "      fs.appendFileSync(logPath, 'fail:bad\\n');",
+          "      process.exit(1);",
+          "    }, 200);",
+          "    return;",
+          "  }",
+          "  process.on('SIGTERM', () => {",
+          "    fs.appendFileSync(logPath, `terminated:${fieldPath}\\n`);",
+          "    process.exit(0);",
+          "  });",
+          "  setTimeout(() => {",
+          "    console.log(JSON.stringify({",
+          "      schemaVersion: 1,",
+          "      model: 'Policy',",
+          "      fieldPath,",
+          "      decision: 'keep',",
+          "      finalName: fieldPath,",
+          "      finalPath: null,",
+          "      finalType: 'string',",
+          "      required: false,",
+          "      rationale: 'slow success',",
+          "      alternatives: [fieldPath],",
+          "      simplestChoice: fieldPath,",
+          "      confidence: 'high',",
+          "      questions: [],",
+          "      ownerBoundary: null",
+          "    }));",
+          "  }, 10000);",
+          "});",
+        ].join("\n"),
+      );
+      await chmod(fakeCodex, 0o755);
+      const graph: ModelGraph = {
+        schemaVersion: 1,
+        source: { path: "schema.ts", revision: null },
+        models: [
+          {
+            id: "Policy",
+            kind: "object",
+            source: { path: "schema.ts", span: { startLine: 1, endLine: 4 } },
+            fields: [
+              fieldForModel("Policy", "bad", "bad"),
+              fieldForModel("Policy", "slow", "slow"),
+            ],
+          },
+        ],
+      };
+      const originalLog = process.env["SCHEMATOR_FAKE_CODEX_LOG"];
+      process.env["SCHEMATOR_FAKE_CODEX_LOG"] = logPath;
+      try {
+        await expect(
+          writeCodexReviews(graph, reviewsDir, {
+            command: fakeCodex,
+            timeoutMs: 5_000,
+            concurrency: 2,
+          }),
+        ).rejects.toThrow(/exited with 1|aborted/);
+      } finally {
+        if (originalLog === undefined) {
+          delete process.env["SCHEMATOR_FAKE_CODEX_LOG"];
+        } else {
+          process.env["SCHEMATOR_FAKE_CODEX_LOG"] = originalLog;
+        }
+      }
+
+      const log = await readFile(logPath, "utf8");
+      expect(log).toContain("start:bad");
+      expect(log).toContain("start:slow");
+      expect(log).toContain("terminated:slow");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("aggregates JSON Schema reviews and keeps nested coverage valid", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -498,6 +679,53 @@ describe("schemator", () => {
     expect(aggregate.findings.map((finding) => finding.message)).toContain(
       "Opaque review decisions require an ownerBoundary.",
     );
+  });
+
+  test("accepts owner-bounded object-like leaf renames", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [field("settings", "settings", "object", true)],
+        },
+      ],
+    };
+    const aggregate = aggregateReviews(graph, [
+      {
+        ...reviewWithoutFinalPath("settings", "parameters"),
+        ownerBoundary: "The owner validates keys inside this object.",
+      },
+    ]);
+
+    expect(aggregate.ok).toBe(true);
+  });
+
+  test("accepts removal-like decisions for object-like leaves", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [field("settings", "settings", "object", true)],
+        },
+      ],
+    };
+    const aggregate = aggregateReviews(graph, [
+      {
+        ...reviewWithoutFinalPath("settings", "settings"),
+        decision: "remove",
+        simplestChoice: "remove",
+      },
+    ]);
+
+    expect(aggregate.ok).toBe(true);
   });
 
   test("extracts JSON Schema array item fields", async () => {
@@ -4388,6 +4616,107 @@ describe("schemator", () => {
     }
   });
 
+  test("run converges when a reviewer tries to rename an accepted name again", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      const runDir = join(dir, "run");
+      const fakeCodex = join(dir, "oscillating-codex.js");
+      await writeOscillatingRenameReviewer(fakeCodex);
+      await writeFile(source, "type Policy = { promptRecipe?: string };\n");
+
+      await execFileAsync(tsxBin(), [
+        "src/cli.ts",
+        "run",
+        "--source",
+        source,
+        "--out",
+        runDir,
+        "--max-iterations",
+        "3",
+        "--codex-command",
+        fakeCodex,
+      ], {
+        cwd: process.cwd(),
+      });
+
+      const summary = JSON.parse(await readFile(join(runDir, "run-summary.json"), "utf8")) as { stable: boolean; stableIteration: number };
+      const finalGraph = JSON.parse(await readFile(join(runDir, "graph.final.json"), "utf8")) as ModelGraph;
+      const secondReduction = JSON.parse(await readFile(join(runDir, "reduction.iteration-2.json"), "utf8")) as {
+        changed: boolean;
+        skipped: Array<{ reason: string; fieldPath: string }>;
+      };
+      const secondPromptFiles = await readdirFileNames(join(runDir, "jobs.iteration-2"));
+      const secondPrompt = await readFile(join(runDir, "jobs.iteration-2", secondPromptFiles[0] ?? ""), "utf8");
+
+      expect(summary.stable).toBe(true);
+      expect(summary.stableIteration).toBe(2);
+      expect(finalGraph.models[0]?.fields.map((item) => item.path)).toEqual(["systemPromptVariant"]);
+      expect(secondReduction.changed).toBe(false);
+      expect(secondReduction.skipped).toContainEqual({
+        decision: "rename",
+        model: "Policy",
+        fieldPath: "systemPromptVariant",
+        reason: "frozen-rename",
+      });
+      expect(secondPrompt).toContain("## Accepted Run Decisions");
+      expect(secondPrompt).toContain("`Policy.promptRecipe` was renamed to `systemPromptVariant`");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("run preserves frozen child renames after parent renames", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      const runDir = join(dir, "run");
+      const fakeCodex = join(dir, "parent-rebase-codex.js");
+      await writeParentRebaseReviewer(fakeCodex);
+      await writeFile(source, "type Policy = { config: { recipe?: string } };\n");
+
+      await execFileAsync(tsxBin(), [
+        "src/cli.ts",
+        "run",
+        "--source",
+        source,
+        "--out",
+        runDir,
+        "--max-iterations",
+        "4",
+        "--codex-command",
+        fakeCodex,
+      ], {
+        cwd: process.cwd(),
+      });
+
+      const summary = JSON.parse(await readFile(join(runDir, "run-summary.json"), "utf8")) as { stable: boolean; stableIteration: number };
+      const finalGraph = JSON.parse(await readFile(join(runDir, "graph.final.json"), "utf8")) as ModelGraph;
+      const thirdReduction = JSON.parse(await readFile(join(runDir, "reduction.iteration-3.json"), "utf8")) as {
+        changed: boolean;
+        skipped: Array<{ reason: string; fieldPath: string }>;
+      };
+      const thirdPromptFiles = await readdirFileNames(join(runDir, "jobs.iteration-3"));
+      const thirdPrompts = await Promise.all(
+        thirdPromptFiles.map((file) => readFile(join(runDir, "jobs.iteration-3", file), "utf8")),
+      );
+
+      expect(summary.stable).toBe(true);
+      expect(summary.stableIteration).toBe(3);
+      expect(finalGraph.models[0]?.fields.map((item) => item.path)).toEqual(["settings", "settings.variant"]);
+      expect(thirdReduction.changed).toBe(false);
+      expect(thirdReduction.skipped).toContainEqual({
+        decision: "rename",
+        model: "Policy",
+        fieldPath: "settings.variant",
+        reason: "frozen-rename",
+      });
+      expect(thirdPrompts.join("\n")).toContain("`Policy.config.recipe` was renamed to `settings.variant`");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("run final report uses the converged aggregate", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -4454,6 +4783,51 @@ describe("schemator", () => {
       "recipe",
       "variant",
     ]);
+    expect(hasGraphChange(graph, aggregate)).toBe(false);
+  });
+
+  test("does not let frozen rename proposals change the graph", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [field("systemPromptVariant", "systemPromptVariant", "string", false)],
+        },
+      ],
+    };
+    const aggregate: AggregateReview = {
+      schemaVersion: 1,
+      ok: true,
+      summary: {
+        totalFields: 1,
+        keep: 0,
+        rename: 1,
+        merge: 0,
+        derive: 0,
+        move: 0,
+        defer: 0,
+        remove: 0,
+        opaque: 0,
+      },
+      findings: [],
+      decisions: [reviewWithoutFinalPath("systemPromptVariant", "promptRecipe")],
+    };
+    const reduction = reduceAggregateGraph(graph, aggregate, {
+      frozenRenamePaths: new Set([graphDecisionKey("JsonSchema", "systemPromptVariant")]),
+    });
+
+    expect(reduction.changed).toBe(false);
+    expect(reduction.graph.models[0]?.fields.map((field) => field.path)).toEqual(["systemPromptVariant"]);
+    expect(reduction.skipped).toContainEqual({
+      decision: "rename",
+      model: "JsonSchema",
+      fieldPath: "systemPromptVariant",
+      reason: "frozen-rename",
+    });
   });
 
   test("keeps simplification rename collisions non-fatal during aggregation", () => {
@@ -4719,6 +5093,95 @@ describe("schemator", () => {
       ["entries", "{ variant: string }[]"],
       ["entries[].variant", "string"],
     ]);
+  });
+
+  test("records composed final paths for nested applied renames", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [
+            field("config", "config", "{ recipe: string }", true),
+            field("config.recipe", "recipe", "string", false),
+          ],
+        },
+      ],
+    };
+    const aggregate: AggregateReview = {
+      schemaVersion: 1,
+      ok: true,
+      summary: {
+        totalFields: 2,
+        keep: 0,
+        rename: 2,
+        merge: 0,
+        derive: 0,
+        move: 0,
+        defer: 0,
+        remove: 0,
+        opaque: 0,
+      },
+      findings: [],
+      decisions: [review("config", "settings"), review("config.recipe", "config.variant")],
+    };
+
+    const reduction = reduceAggregateGraph(graph, aggregate);
+
+    expect(reduction.applied).toContainEqual({
+      decision: "rename",
+      model: "JsonSchema",
+      fieldPath: "config.recipe",
+      finalPath: "settings.variant",
+    });
+  });
+
+  test("records actual final paths for chained applied renames", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [
+            field("a", "a", "string", false),
+            field("b", "b", "string", false),
+          ],
+        },
+      ],
+    };
+    const aggregate: AggregateReview = {
+      schemaVersion: 1,
+      ok: true,
+      summary: {
+        totalFields: 2,
+        keep: 0,
+        rename: 2,
+        merge: 0,
+        derive: 0,
+        move: 0,
+        defer: 0,
+        remove: 0,
+        opaque: 0,
+      },
+      findings: [],
+      decisions: [review("b", "c"), review("a", "b")],
+    };
+
+    const reduction = reduceAggregateGraph(graph, aggregate);
+
+    expect(reduction.graph.models[0]?.fields.map((item) => item.path)).toEqual(["b", "c"]);
+    expect(reduction.applied).toContainEqual({
+      decision: "rename",
+      model: "JsonSchema",
+      fieldPath: "a",
+      finalPath: "b",
+    });
   });
 
   test("rewrites only direct child names in parent type text", () => {
@@ -5523,6 +5986,19 @@ function graphWithOneField(modelId: string, path: string, name: string): ModelGr
   };
 }
 
+function fieldForModel(modelId: string, path: string, name: string) {
+  return {
+    path,
+    name,
+    type: "string",
+    required: false,
+    nullable: false,
+    parent: modelId,
+    objectLike: false,
+    source: { path: "schema.ts", span: { startLine: 2, endLine: 2 } },
+  };
+}
+
 function promptForGraph(graph: ModelGraph): string {
   const model = graph.models[0];
   const field = model?.fields[0];
@@ -5557,6 +6033,81 @@ async function writeFakeModelReviewer(path: string): Promise<void> {
       "    required: false,",
       "    rationale: shouldRename ? 'Model reviewer rejects a metaphorical prompt-construction name.' : 'Model reviewer keeps intentional declarative vocabulary.',",
       "    alternatives: [finalName, 'remove'],",
+      "    simplestChoice: finalName,",
+      "    confidence: 'high',",
+      "    questions: [],",
+      "    ownerBoundary: null",
+      "  }));",
+      "});",
+    ].join("\n"),
+  );
+  await chmod(path, 0o755);
+}
+
+async function writeOscillatingRenameReviewer(path: string): Promise<void> {
+  await writeFile(
+    path,
+    [
+      "#!/usr/bin/env node",
+      "let prompt = '';",
+      "process.stdin.setEncoding('utf8');",
+      "process.stdin.on('data', (chunk) => { prompt += chunk; });",
+      "process.stdin.on('end', () => {",
+      "  const model = /- Model: `([^`]+)`/.exec(prompt)?.[1] ?? 'Unknown';",
+      "  const fieldPath = /- Field path: `([^`]+)`/.exec(prompt)?.[1] ?? 'unknown';",
+      "  const fieldName = /- Field name: `([^`]+)`/.exec(prompt)?.[1] ?? fieldPath;",
+      "  const finalName = fieldName === 'promptRecipe' ? 'systemPromptVariant' : 'promptRecipe';",
+      "  console.log(JSON.stringify({",
+      "    schemaVersion: 1,",
+      "    model,",
+      "    fieldPath,",
+      "    decision: 'rename',",
+      "    finalName,",
+      "    finalPath: null,",
+      "    finalType: 'string',",
+      "    required: false,",
+      "    rationale: 'Fake reviewer intentionally alternates between two names.',",
+      "    alternatives: [finalName, fieldName],",
+      "    simplestChoice: finalName,",
+      "    confidence: 'high',",
+      "    questions: [],",
+      "    ownerBoundary: null",
+      "  }));",
+      "});",
+    ].join("\n"),
+  );
+  await chmod(path, 0o755);
+}
+
+async function writeParentRebaseReviewer(path: string): Promise<void> {
+  await writeFile(
+    path,
+    [
+      "#!/usr/bin/env node",
+      "let prompt = '';",
+      "process.stdin.setEncoding('utf8');",
+      "process.stdin.on('data', (chunk) => { prompt += chunk; });",
+      "process.stdin.on('end', () => {",
+      "  const model = /- Model: `([^`]+)`/.exec(prompt)?.[1] ?? 'Unknown';",
+      "  const fieldPath = /- Field path: `([^`]+)`/.exec(prompt)?.[1] ?? 'unknown';",
+      "  const fieldName = /- Field name: `([^`]+)`/.exec(prompt)?.[1] ?? fieldPath;",
+      "  const hasChildRename = prompt.includes('`Policy.config.recipe` was renamed to `config.variant`') || prompt.includes('`Policy.config.recipe` was renamed to `settings.variant`');",
+      "  const shouldRenameChildFirst = fieldPath === 'config.recipe' && !prompt.includes('## Accepted Run Decisions');",
+      "  const shouldRenameParentSecond = fieldPath === 'config' && hasChildRename;",
+      "  const shouldChurnMovedChild = fieldPath === 'settings.variant';",
+      "  const decision = shouldRenameChildFirst || shouldRenameParentSecond || shouldChurnMovedChild ? 'rename' : 'keep';",
+      "  const finalName = shouldRenameChildFirst ? 'variant' : shouldRenameParentSecond ? 'settings' : shouldChurnMovedChild ? 'recipe' : fieldName;",
+      "  console.log(JSON.stringify({",
+      "    schemaVersion: 1,",
+      "    model,",
+      "    fieldPath,",
+      "    decision,",
+      "    finalName,",
+      "    finalPath: null,",
+      "    finalType: 'string',",
+      "    required: false,",
+      "    rationale: 'Fake reviewer checks rebasing frozen child rename paths after a parent rename.',",
+      "    alternatives: [finalName, fieldName],",
       "    simplestChoice: finalName,",
       "    confidence: 'high',",
       "    questions: [],",

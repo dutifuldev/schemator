@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pathToFileNamePart, prepareGeneratedOutputDir, writeJson } from "./files.js";
-import { renderFieldPrompt } from "./jobs.js";
+import { renderFieldPrompt, type RunHistoryEntry } from "./jobs.js";
 import type { FieldReview, ModelGraph } from "./types.js";
 import { validateFieldReview } from "./validate.js";
 
@@ -11,7 +11,9 @@ export type CodexReviewOptions = {
   model?: string;
   cwd?: string;
   timeoutMs?: number;
+  concurrency?: number;
   projectContext?: string;
+  runHistory?: RunHistoryEntry[];
 };
 
 export async function writeCodexReviews(
@@ -20,25 +22,60 @@ export async function writeCodexReviews(
   options: CodexReviewOptions = {},
 ): Promise<FieldReview[]> {
   await prepareGeneratedOutputDir(outputDir, ".review.json");
-  const reviews: FieldReview[] = [];
-  for (const model of graph.models) {
-    for (const field of model.fields) {
-      const prompt = renderFieldPrompt(
-        graph,
-        model,
-        field,
-        options.projectContext === undefined ? {} : { projectContext: options.projectContext },
-      );
-      const review = bindReviewIdentity(await runCodexFieldReview(prompt, options), model.id, field.path);
-      const validation = validateFieldReview(review);
-      if (!validation.ok) {
-        throw new Error(
-          `Codex review for ${model.id}.${field.path} is invalid:\n${validation.errors.join("\n")}`,
-        );
+  const jobs = graph.models.flatMap((model) => model.fields.map((field) => ({ model, field })));
+  const reviews = new Array<FieldReview>(jobs.length);
+  let cursor = 0;
+  let firstError: unknown;
+  const abortController = new AbortController();
+  const workerCount = Math.min(Math.max(1, options.concurrency ?? 4), Math.max(1, jobs.length));
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (!abortController.signal.aborted && cursor < jobs.length) {
+      const index = cursor;
+      cursor += 1;
+      const job = jobs[index];
+      if (!job) {
+        continue;
       }
-      reviews.push(review);
-      const fileName = `${pathToFileNamePart(model.id)}.${pathToFileNamePart(field.path)}.review.json`;
-      await writeJson(join(outputDir, fileName), review);
+      try {
+        const { model, field } = job;
+        const prompt = renderFieldPrompt(
+          graph,
+          model,
+          field,
+          {
+            ...(options.projectContext === undefined ? {} : { projectContext: options.projectContext }),
+            ...(options.runHistory === undefined ? {} : { runHistory: options.runHistory }),
+          },
+        );
+        const review = bindReviewIdentity(
+          await runCodexFieldReview(prompt, options, abortController.signal),
+          model.id,
+          field.path,
+        );
+        const validation = validateFieldReview(review);
+        if (!validation.ok) {
+          throw new Error(
+            `Codex review for ${model.id}.${field.path} is invalid:\n${validation.errors.join("\n")}`,
+          );
+        }
+        reviews[index] = review;
+        const fileName = `${pathToFileNamePart(model.id)}.${pathToFileNamePart(field.path)}.review.json`;
+        await writeJson(join(outputDir, fileName), review);
+      } catch (error) {
+        firstError ??= error;
+        abortController.abort();
+        throw error;
+      }
+    }
+  });
+  try {
+    await Promise.all(workers);
+  } catch (error) {
+    throw firstError ?? error;
+  }
+  for (const review of reviews) {
+    if (!review) {
+      throw new Error("Codex review worker finished without writing every review.");
     }
   }
   return reviews;
@@ -52,7 +89,11 @@ function bindReviewIdentity(review: FieldReview, model: string, fieldPath: strin
   };
 }
 
-async function runCodexFieldReview(prompt: string, options: CodexReviewOptions): Promise<FieldReview> {
+async function runCodexFieldReview(
+  prompt: string,
+  options: CodexReviewOptions,
+  signal?: AbortSignal,
+): Promise<FieldReview> {
   const command = options.command ?? "codex";
   const args = [
     "--ask-for-approval",
@@ -71,6 +112,7 @@ async function runCodexFieldReview(prompt: string, options: CodexReviewOptions):
   const output = await execWithInput(command, args, prompt, {
     cwd: options.cwd ?? process.cwd(),
     timeoutMs: options.timeoutMs ?? 120_000,
+    ...(signal === undefined ? {} : { signal }),
   });
   return parseFieldReviewOutput(output);
 }
@@ -83,19 +125,49 @@ function execWithInput(
   command: string,
   args: string[],
   input: string,
-  options: { cwd: string; timeoutMs: number },
+  options: { cwd: string; timeoutMs: number; signal?: AbortSignal },
 ): Promise<string> {
   return new Promise((resolve, reject) => {
+    if (options.signal?.aborted) {
+      reject(new Error(`${command} aborted before start`));
+      return;
+    }
     const child = spawn(command, args, {
       cwd: options.cwd,
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
+    let settled = false;
+    const cleanup = (): void => {
+      clearTimeout(timer);
+      options.signal?.removeEventListener("abort", abort);
+    };
+    const fail = (error: Error): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const succeed = (output: string): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve(output);
+    };
+    const abort = (): void => {
+      child.kill("SIGTERM");
+      fail(new Error(`${command} aborted`));
+    };
     const timer = setTimeout(() => {
       child.kill("SIGTERM");
-      reject(new Error(`${command} timed out after ${options.timeoutMs}ms`));
+      fail(new Error(`${command} timed out after ${options.timeoutMs}ms`));
     }, options.timeoutMs);
+    options.signal?.addEventListener("abort", abort, { once: true });
 
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
@@ -106,16 +178,14 @@ function execWithInput(
       stderr += chunk;
     });
     child.on("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
+      fail(error);
     });
     child.on("close", (code) => {
-      clearTimeout(timer);
       if (code !== 0) {
-        reject(new Error(`${command} exited with ${code ?? "unknown"}:\n${stderr || stdout}`));
+        fail(new Error(`${command} exited with ${code ?? "unknown"}:\n${stderr || stdout}`));
         return;
       }
-      resolve(stdout);
+      succeed(stdout);
     });
     child.stdin.end(input);
   });
