@@ -3335,6 +3335,39 @@ describe("schemator", () => {
     }
   });
 
+  test("extracts top-level TypeScript Record aliases", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Headers = Record<string, {",
+          "  id: string;",
+          "  recipe?: string;",
+          "}>;",
+          "type Labels = Record<string, string>;",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+      const headers = graph.models.find((model) => model.id === "Headers");
+      const labels = graph.models.find((model) => model.id === "Labels");
+
+      expect(headers?.kind).toBe("object");
+      expect(headers?.fields.map((field) => [field.path, field.required, field.objectLike])).toEqual([
+        ["additionalProperties", true, true],
+        ["additionalProperties.id", true, false],
+        ["additionalProperties.recipe", false, false],
+      ]);
+      expect(labels?.kind).toBe("object");
+      expect(labels?.fields.map((field) => [field.path, field.required, field.objectLike])).toEqual([
+        ["additionalProperties", true, false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("extracts TypeScript Record value fields inside arrays", async () => {
     const dir = await mkdtemp(join(tmpdir(), "schemator-"));
     try {
@@ -3367,6 +3400,31 @@ describe("schemator", () => {
         ["rows", true, true],
         ["rows[].additionalProperties", true, true],
         ["rows[].additionalProperties.id", true, false],
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("extracts TypeScript Record value fields inside union branches", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      await writeFile(
+        source,
+        [
+          "type Model =",
+          "  | { settings: Record<string, { id: string }> }",
+          "  | { settings: Record<string, { name: string }> };",
+        ].join("\n"),
+      );
+      const graph = await extractGraph(source);
+
+      expect(graph.models[0]?.fields.map((field) => [field.path, field.required, field.objectLike])).toEqual([
+        ["settings", true, true],
+        ["settings.additionalProperties", true, true],
+        ["settings.additionalProperties.id", false, false],
+        ["settings.additionalProperties.name", false, false],
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });

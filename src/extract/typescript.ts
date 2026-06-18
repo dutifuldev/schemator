@@ -44,7 +44,7 @@ function collectDeclarations(sourceFile: ts.SourceFile): Declaration[] {
 function extractObjectModelNames(declarations: Declaration[]): Set<string> {
   const names = new Set(collectObjectDeclarations(declarations).keys());
   for (const declaration of declarations) {
-    if (declarationIsArrayAlias(declaration)) {
+    if (declarationIsArrayAlias(declaration) || declarationIsRecordAlias(declaration)) {
       names.add(declaration.name.text);
     }
   }
@@ -110,6 +110,7 @@ function declarationToModel(
     addMemberGroupsFields(memberGroups, "", id, sourceFile, sourcePath, startLine, modelNames, fields, rootRequired, true);
   } else if (ts.isTypeAliasDeclaration(declaration)) {
     addArrayAliasFields(declaration, sourceFile, sourcePath, startLine, modelNames, fields);
+    addRecordAliasFields(declaration, sourceFile, sourcePath, startLine, modelNames, fields);
   }
   return {
     id,
@@ -124,7 +125,8 @@ function declarationResolvesToObject(
   objectDeclarations: ObjectDeclarations,
 ): boolean {
   return ts.isTypeAliasDeclaration(declaration) &&
-    memberGroupsForDeclaration(declaration, objectDeclarations, new Set([declaration.name.text])).length > 0;
+    (memberGroupsForDeclaration(declaration, objectDeclarations, new Set([declaration.name.text])).length > 0 ||
+      declarationIsRecordAlias(declaration));
 }
 
 function addInheritedInterfaceFields(
@@ -220,6 +222,10 @@ function declarationIsArrayAlias(declaration: Declaration): boolean {
   return ts.isTypeAliasDeclaration(declaration) && Boolean(arrayElementTypeNode(declaration.type));
 }
 
+function declarationIsRecordAlias(declaration: Declaration): boolean {
+  return ts.isTypeAliasDeclaration(declaration) && isRecordLikeType(declaration.type);
+}
+
 function modelKind(declaration: Declaration, objectDeclarations: ObjectDeclarations): ModelKind {
   if (ts.isInterfaceDeclaration(declaration)) {
     return "object";
@@ -238,6 +244,9 @@ function modelKind(declaration: Declaration, objectDeclarations: ObjectDeclarati
   }
   if (arrayElementTypeNode(declaration.type)) {
     return "array";
+  }
+  if (declarationIsRecordAlias(declaration)) {
+    return "object";
   }
   if (ts.isUnionTypeNode(declaration.type)) {
     return "enum";
@@ -288,6 +297,31 @@ function addArrayAliasFields(
       recordRequired: descendantRequired && hasOnlyRecordObjectBranches(elementTypes),
       arrayRecordRequired: descendantRequired && hasOnlyArrayRecordObjectBranches(elementTypes),
     },
+  );
+}
+
+function addRecordAliasFields(
+  declaration: ts.TypeAliasDeclaration,
+  sourceFile: ts.SourceFile,
+  sourcePath: string,
+  startLine: number,
+  modelNames: Set<string>,
+  fields: FieldNode[],
+): void {
+  const valueTypes = recordValueTypeNodesForTypeNode(declaration.type);
+  if (valueTypes.length === 0) {
+    return;
+  }
+  addRecordValueFields(
+    valueTypes,
+    "",
+    declaration.name.text,
+    sourceFile,
+    sourcePath,
+    startLine,
+    modelNames,
+    fields,
+    !typeAllowsNullish(declaration.type),
   );
 }
 
@@ -485,40 +519,23 @@ function addMemberGroupsFields(
         candidate.type ? !typeAllowsNullish(candidate.type) : true
       );
       const descendantRequired = required && ancestorRequired && allOccurrencesNonNullable;
-      const inlineObjectMemberGroups = occurrences.flatMap((candidate) => propertyInlineObjectMemberGroups(candidate));
-      if (inlineObjectMemberGroups.length > 0) {
-        const inlineObjectDescendantRequired = descendantRequired &&
-          occurrences.every((candidate) => candidate.type ? hasOnlyInlineObjectBranches(nonNullableTypeNodes(candidate.type)) : true);
-        addMemberGroupsFields(
-          inlineObjectMemberGroups,
-          path,
-          modelId,
-          sourceFile,
-          sourcePath,
-          startLine,
-          modelNames,
-          fields,
-          inlineObjectDescendantRequired,
-          false,
-        );
-      }
-      const inlineArrayObjectMemberGroups = occurrences.flatMap((candidate) => propertyInlineArrayObjectMemberGroups(candidate));
-      if (inlineArrayObjectMemberGroups.length > 0) {
-        const inlineArrayDescendantRequired = descendantRequired &&
-          occurrences.every((candidate) => candidate.type ? hasOnlyInlineArrayObjectBranches(nonNullableTypeNodes(candidate.type)) : true);
-        addMemberGroupsFields(
-          inlineArrayObjectMemberGroups,
-          `${path}[]`,
-          modelId,
-          sourceFile,
-          sourcePath,
-          startLine,
-          modelNames,
-          fields,
-          inlineArrayDescendantRequired,
-          false,
-        );
-      }
+      const occurrenceTypeNodes = occurrences.flatMap((candidate) => candidate.type ? nonNullableTypeNodes(candidate.type) : []);
+      addNestedTypeFields(
+        occurrenceTypeNodes,
+        path,
+        modelId,
+        sourceFile,
+        sourcePath,
+        startLine,
+        modelNames,
+        fields,
+        {
+          objectRequired: descendantRequired && hasOnlyInlineObjectBranches(occurrenceTypeNodes),
+          arrayRequired: descendantRequired && hasOnlyInlineArrayObjectBranches(occurrenceTypeNodes),
+          recordRequired: descendantRequired && hasOnlyRecordObjectBranches(occurrenceTypeNodes),
+          arrayRecordRequired: descendantRequired && hasOnlyArrayRecordObjectBranches(occurrenceTypeNodes),
+        },
+      );
     }
   }
   const indexOccurrences = memberGroups
@@ -916,14 +933,6 @@ function removeExistingPath(fields: FieldNode[], path: string): void {
       fields.splice(index, 1);
     }
   }
-}
-
-function propertyInlineObjectMemberGroups(member: ts.PropertySignature): ReadonlyArray<ReadonlyArray<ts.TypeElement>> {
-  return member.type ? inlineObjectMemberGroupsForTypeNodes(nonNullableTypeNodes(member.type)) : [];
-}
-
-function propertyInlineArrayObjectMemberGroups(member: ts.PropertySignature): ReadonlyArray<ReadonlyArray<ts.TypeElement>> {
-  return member.type ? inlineArrayObjectMemberGroupsForTypeNodes(nonNullableTypeNodes(member.type)) : [];
 }
 
 function inlineArrayObjectMemberGroupsForTypeNodes(
