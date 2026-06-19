@@ -1,4 +1,4 @@
-# Example Project Context Prompt
+# Project Context Prompt
 
 Use this project context for every field decision in the OpenClaw model harness
 profile review.
@@ -49,9 +49,9 @@ Propose large structural changes when they are justified by the model and task
 context. Remove, derive, merge, or move fields when doing so clearly produces a
 smaller, more durable model.
 
-Some extracted blocks may be examples or fixtures rather than canonical model
+Some extracted blocks may be fixtures or draft snippets rather than canonical model
 definitions. Use them as evidence, but do not overfit schema decisions to
-example-only values.
+fixture-only values.
 
 When a decision depends on missing product semantics, say what context is
 missing instead of inventing the invariant.

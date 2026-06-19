@@ -32,7 +32,7 @@ type ModelHarnessProfile = {
 | Field/column | Type | Required? | Purpose | Why might it belong? | Alternatives / synonyms | Simplest option |
 | --- | --- | --- | --- | --- | --- | --- |
 | `schemaVersion` | literal `1` | yes | Identifies the profile schema contract | Needed for validation and future migration of installed profile packs | `version`, `apiVersion`, `profileVersion` | `schemaVersion` matches the materialized registry |
-| `id` | `string` | yes | Stable profile identifier | Needed for explicit selection, bindings, diagnostics, and inheritance references | `name`, `ref`, `profileId` | `id` is shortest and matches existing profile id examples |
+| `id` | `string` | yes | Stable profile identifier | Needed for explicit selection, bindings, diagnostics, and inheritance references | `name`, `ref`, `profileId` | `id` is shortest and matches existing profile identifiers |
 | `extends` | `string` | no | Names a parent profile in the materialized registry | Needed for in-process layered profile representation after authoring formats hydrate | `parent`, `base`, `from`, KRM `resources`/patches only | `extends` is explicit and concise for the materialized form |
 | `policy` | `ModelProfilePolicy` | yes | Holds closed portable harness policy fields | This is the profile's primary behavior payload | `spec`, `behavior`, `harness` | `policy` clearly excludes provider and serving settings |
 | `settings` | `ModelProfileSettingsSchema` | no | Declares allowed per-profile settings | Needed for GPT-5 personality and future narrow settings without a generic bag | `options`, `parameters`, `config` | `settings` is conventional and less open-ended than `config` |

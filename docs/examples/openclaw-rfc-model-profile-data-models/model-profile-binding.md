@@ -50,7 +50,7 @@ more than a new field. A selector with no criteria should be invalid, and two
 bindings at the same precedence level must not be ambiguous.
 
 The target field could be renamed to `profileId` for clarity. However, the RFC
-already uses `profile` in examples and the binding context makes the target
+already uses `profile` in profile data and the binding context makes the target
 obvious. `profile` is also shorter while still clear.
 
 No separate `priority` field should be added. The RFC already defines
