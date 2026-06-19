@@ -1,6 +1,6 @@
 ---
 name: final-report
-description: Use when preparing, publishing, or reviewing a final Schemator run report. Ensures the report includes raw artifacts, schema JSON, provenance, decisions, verification, and push links instead of only a narrative summary.
+description: Use when preparing, publishing, or reviewing a final Schemator run report. Ensures the report includes raw artifacts, schema JSON, source details, decisions, verification, and push links instead of only a narrative summary.
 ---
 
 # Final Report
