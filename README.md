@@ -1,47 +1,89 @@
 # schemator
 
-Schemator is a CLI for reviewing and simplifying data models until they reach a
-minimum viable schema.
+Schemator reviews a draft data model and pushes it toward a smaller, clearer
+schema.
 
-The tool will extract fields and columns from schemas, run independent reviews
-for each field, aggregate simplification decisions, apply safe reductions, and
-repeat until the model is stable.
+It extracts fields from TypeScript, JSON Schema, YAML, JSON, or Markdown
+proposal snippets, asks independent reviewers to challenge each field, applies
+safe reductions, and repeats until the graph stabilizes.
 
-## Goal
+## Quick Start
 
-Data models tend to grow before every field has earned its place. Schemator is
-intended to make each field defend itself.
-
-The target workflow is:
-
-1. Extract a normalized graph from a schema.
-2. Review every added or changed field independently.
-3. Aggregate remove, rename, merge, derive, move, and defer recommendations.
-4. Apply safe simplifications.
-5. Repeat until no field reviewer can simplify the model further.
-6. Generate a human-readable report from structured JSON artifacts.
-
-## CLI
+From a local checkout, install dependencies first:
 
 ```bash
-schemator extract --source schema.ts --out .schemator/graph.iteration-1.json
-schemator create-jobs --graph .schemator/graph.iteration-1.json --context project-context.md --out .schemator/jobs.iteration-1
-schemator review --graph .schemator/graph.iteration-1.json --context project-context.md --out .schemator/reviews.iteration-1
-schemator review --strategy local --graph .schemator/graph.iteration-1.json --out .schemator/reviews.iteration-1
-schemator aggregate --graph .schemator/graph.iteration-1.json --reviews .schemator/reviews.iteration-1 --out .schemator/aggregate.iteration-1.json
-schemator apply --graph .schemator/graph.iteration-1.json --aggregate .schemator/aggregate.iteration-1.json --out .schemator/patch.iteration-1.md
+npm install
+```
+
+Run a full review against a draft schema or proposal:
+
+```bash
+schemator run --source schema.md --context project-context.md --out .schemator
+```
+
+If you are using the checkout directly, prefix CLI commands with
+`npm run dev --`.
+
+Then inspect the report and diff:
+
+```bash
 schemator report --run .schemator --out .schemator/final-report.md
 schemator diff --run .schemator --out .schemator/graph-diff.md
 ```
 
-End-to-end:
+Use `--context` for product and naming guidance. Good context explains what the
+schema is for, which fields are user-facing, which vocabulary is intentional,
+and what should stay stable.
+
+## Review Strategy
+
+`codex` is the default strategy. It starts one independent `codex exec` reviewer
+per field, validates each JSON result, aggregates the decisions, and applies
+safe changes.
+
+Use local mode only for smoke tests:
 
 ```bash
-schemator run --source schema.ts --context project-context.md --out .schemator
-schemator run --strategy local --source schema.ts --out .schemator-smoke
+schemator run --strategy local --source schema.md --out .schemator-smoke
 ```
 
-Bundled agent skills:
+Local mode is conservative and does not make semantic field-specific rename or
+removal decisions.
+
+## Useful Commands
+
+Generate the field graph:
+
+```bash
+schemator extract --source schema.ts --out .schemator/graph.iteration-1.json
+```
+
+Write review prompts without running reviewers:
+
+```bash
+schemator create-jobs --graph .schemator/graph.iteration-1.json --context project-context.md --out .schemator/jobs.iteration-1
+```
+
+Run review and aggregation manually:
+
+```bash
+schemator review --graph .schemator/graph.iteration-1.json --context project-context.md --out .schemator/reviews.iteration-1
+schemator aggregate --graph .schemator/graph.iteration-1.json --reviews .schemator/reviews.iteration-1 --out .schemator/aggregate.iteration-1.json
+schemator apply --graph .schemator/graph.iteration-1.json --aggregate .schemator/aggregate.iteration-1.json --out .schemator/patch.iteration-1.md
+```
+
+## Reports
+
+Run reports are based on reducer artifacts, not raw review totals. They separate
+applied changes, skipped proposals, manual structural proposals, consistency
+warnings, and the final graph.
+
+Treat a converged result as a candidate schema, not automatic product truth.
+Do a manual naming and product-semantics pass before accepting the final model.
+
+## Bundled Agent Skills
+
+Schemator exposes its agent skills through [Skillflag](https://github.com/dutifuldev/skillflag):
 
 ```bash
 schemator --skill list
@@ -49,41 +91,11 @@ schemator --skill show schemator
 schemator --skill export schemator | npx skillflag install --agent codex
 ```
 
-`codex` is the default review strategy. It starts one independent `codex exec`
-reviewer per field, runs up to four reviewers concurrently by default, constrains the answer with
-`schemas/field-review.schema.json`, and validates each returned review before
-writing it.
+Bundled skills:
 
-Use `--codex-concurrency <n>` to raise or lower concurrent Codex reviewers for a
-run.
+- `schemator`: how to run and interpret Schemator.
+- `final-report`: how to publish a complete final run report.
 
-`local` is a conservative deterministic fallback for smoke tests. It does not
-make semantic field-specific rename or removal decisions.
+## More
 
-`--context <file>` is optional. When supplied, Schemator includes the project
-and task context in every generated field-review prompt and copies it into run
-artifacts as `project-context.md`.
-
-End-to-end run reports are based on reducer artifacts, not raw review totals.
-They separate applied changes, skipped proposals, manual structural proposals,
-generic consistency warnings, and the final graph. `schemator diff --run`
-prints the initial-to-final graph diff directly.
-
-## Current Status
-
-This repository contains the first TypeScript implementation. It supports:
-
-- Markdown fenced TypeScript, JSON, and YAML extraction
-- JSON Schema extraction
-- normalized field graphs
-- independent field-review prompt generation
-- Codex-backed independent field review by default
-- conservative local fallback review with `--strategy local`
-- aggregate coverage validation
-- in-memory simplification until stable
-- reduction artifacts that record applied and skipped decisions
-- patch-plan and Markdown report generation
-- initial-to-final graph diff generation
-
-- [Implementation plan](docs/implementation-plan.md)
-- [Example OpenClaw RFC review artifacts](docs/examples/openclaw-rfc-model-profile-data-models/)
+- [OpenClaw RFC review artifacts](docs/examples/openclaw-rfc-model-profile-data-models/)
