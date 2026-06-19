@@ -2,6 +2,7 @@
 import { access, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Command } from "commander";
+import { findSkillsRoot, maybeHandleSkillflag } from "skillflag";
 import { renderPatchPlan } from "./apply.js";
 import { writeCodexReviews } from "./codex-review.js";
 import { aggregateFromFiles, combineAggregates, deriveFinalGraph, runConvergence } from "./convergence.js";
@@ -13,6 +14,11 @@ import { renderReport, renderRunReport, type ReductionArtifact } from "./report.
 import { writeDeterministicReviews } from "./review.js";
 import type { AggregateReview, ModelGraph } from "./types.js";
 import { validateAggregateReview, validateFieldReview, validateModelGraph } from "./validate.js";
+
+await maybeHandleSkillflag(process.argv, {
+  skillsRoot: findSkillsRoot(import.meta.url),
+  includeBundledSkill: false,
+});
 
 const program = new Command();
 

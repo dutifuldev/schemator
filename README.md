@@ -41,6 +41,14 @@ schemator run --source schema.ts --context project-context.md --out .schemator
 schemator run --strategy local --source schema.ts --out .schemator-smoke
 ```
 
+Bundled agent skills:
+
+```bash
+schemator --skill list
+schemator --skill show schemator
+schemator --skill export schemator | npx skillflag install --agent codex
+```
+
 `codex` is the default review strategy. It starts one independent `codex exec`
 reviewer per field, runs up to four reviewers concurrently by default, constrains the answer with
 `schemas/field-review.schema.json`, and validates each returned review before
