@@ -1,0 +1,4 @@
+interface:
+  display_name: "Schemator"
+  short_description: "Run schema review and convergence workflows"
+  default_prompt: "Use $schemator to review this draft schema with project context, inspect the run artifacts, and produce an auditable schema report."

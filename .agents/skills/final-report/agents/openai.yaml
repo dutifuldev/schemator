@@ -1,0 +1,4 @@
+interface:
+  display_name: "Final Report"
+  short_description: "Publish complete Schemator run reports"
+  default_prompt: "Use $final-report to prepare a complete Schemator final-run report with raw initial and final schema JSON, decisions, verification, and links."
