@@ -31,6 +31,7 @@ schemator review --strategy local --graph .schemator/graph.iteration-1.json --ou
 schemator aggregate --graph .schemator/graph.iteration-1.json --reviews .schemator/reviews.iteration-1 --out .schemator/aggregate.iteration-1.json
 schemator apply --graph .schemator/graph.iteration-1.json --aggregate .schemator/aggregate.iteration-1.json --out .schemator/patch.iteration-1.md
 schemator report --run .schemator --out .schemator/final-report.md
+schemator diff --run .schemator --out .schemator/graph-diff.md
 ```
 
 End-to-end:
@@ -55,6 +56,11 @@ make semantic field-specific rename or removal decisions.
 and task context in every generated field-review prompt and copies it into run
 artifacts as `project-context.md`.
 
+End-to-end run reports are based on reducer artifacts, not raw review totals.
+They separate applied changes, skipped proposals, manual structural proposals,
+generic consistency warnings, and the final graph. `schemator diff --run`
+prints the initial-to-final graph diff directly.
+
 ## Current Status
 
 This repository contains the first TypeScript implementation. It supports:
@@ -67,7 +73,9 @@ This repository contains the first TypeScript implementation. It supports:
 - conservative local fallback review with `--strategy local`
 - aggregate coverage validation
 - in-memory simplification until stable
+- reduction artifacts that record applied and skipped decisions
 - patch-plan and Markdown report generation
+- initial-to-final graph diff generation
 
 - [Implementation plan](docs/implementation-plan.md)
 - [Example OpenClaw RFC review artifacts](docs/examples/openclaw-rfc-model-profile-data-models/)

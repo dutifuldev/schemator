@@ -12,7 +12,7 @@ import { extractGraph } from "../src/extract/index.js";
 import { pathToFileNamePart } from "../src/files.js";
 import { applyAggregateToGraph, graphDecisionKey, hasGraphChange, hasSimplification, reduceAggregateGraph } from "../src/graph.js";
 import { renderFieldPrompt, writeReviewJobs } from "../src/jobs.js";
-import { renderReport } from "../src/report.js";
+import { renderReport, renderRunReport } from "../src/report.js";
 import { writeDeterministicReviews } from "../src/review.js";
 import type { AggregateReview, ModelGraph } from "../src/types.js";
 
@@ -4433,9 +4433,10 @@ describe("schemator", () => {
       });
 
       const report = await readFile(reportPath, "utf8");
-      expect(report).toContain("- Renamed: 1");
-      expect(report).toContain("| `T` | `promptRecipe` | rename | `systemPromptVariant` |");
-      expect(report).toContain("| `T` | `systemPromptVariant` | keep |");
+      expect(report).toContain("- Applied changes: 1");
+      expect(report).toContain("| 1 | `T` | `promptRecipe` | rename | `systemPromptVariant` |");
+      expect(report).toContain("| `systemPromptVariant` | `string` | yes | no |");
+      expect(report).not.toContain("| `T` | `systemPromptVariant` | keep |");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -4461,8 +4462,36 @@ describe("schemator", () => {
       });
 
       const report = await readFile(reportPath, "utf8");
-      expect(report).toContain("| `T` | `id` | keep | `id` |");
+      expect(report).toContain("- Applied changes: 0");
+      expect(report).toContain("| `id` | `string` | yes | no |");
       expect(report).not.toContain("variant");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("diff reports initial and final run graph changes", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schemator-"));
+    try {
+      const source = join(dir, "schema.ts");
+      const runDir = join(dir, "run");
+      const diffPath = join(runDir, "diff.md");
+      const fakeCodex = join(dir, "fake-codex.js");
+      await writeFakeModelReviewer(fakeCodex);
+      await writeFile(source, "type T = { promptRecipe: string };\n");
+
+      await execFileAsync(tsxBin(), ["src/cli.ts", "run", "--source", source, "--out", runDir, "--codex-command", fakeCodex], {
+        cwd: process.cwd(),
+      });
+      await execFileAsync(tsxBin(), ["src/cli.ts", "diff", "--run", runDir, "--out", diffPath], {
+        cwd: process.cwd(),
+      });
+
+      const diff = await readFile(diffPath, "utf8");
+      expect(diff).toContain("- Initial fields: 1");
+      expect(diff).toContain("- Final fields: 1");
+      expect(diff).toContain("| `T` | `promptRecipe` | `string` |");
+      expect(diff).toContain("| `T` | `systemPromptVariant` | `string` |");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -4731,9 +4760,10 @@ describe("schemator", () => {
       });
       const report = await readFile(join(runDir, "final-report.md"), "utf8");
 
-      expect(report).toContain("- Renamed: 1");
-      expect(report).toContain("| `ModelProfilePolicy` | `promptRecipe` | rename | `systemPromptVariant` |");
-      expect(report).toContain("| `ModelProfilePolicy` | `systemPromptVariant` | keep |");
+      expect(report).toContain("- Applied changes: 1");
+      expect(report).toContain("| 1 | `ModelProfilePolicy` | `promptRecipe` | rename | `systemPromptVariant` |");
+      expect(report).toContain("| `systemPromptVariant` | `string` | no | no |");
+      expect(report).not.toContain("| `ModelProfilePolicy` | `systemPromptVariant` | keep |");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -5385,6 +5415,124 @@ describe("schemator", () => {
 
     expect(report).toContain("| `JsonSchema` | `config.recipe` | rename | `settings.variant` |");
     expect(report).toContain("| `settings.variant` | `string` | yes | no |");
+  });
+
+  test("run reports separate manual structural proposals", () => {
+    const graph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [
+            field("source", "source", "string", false),
+            field("target", "target", "string", false),
+          ],
+        },
+      ],
+    };
+    const aggregate: AggregateReview = {
+      schemaVersion: 1,
+      ok: true,
+      summary: {
+        totalFields: 2,
+        keep: 1,
+        rename: 0,
+        merge: 1,
+        derive: 0,
+        move: 0,
+        defer: 0,
+        remove: 0,
+        opaque: 0,
+      },
+      findings: [],
+      decisions: [
+        {
+          ...reviewWithoutFinalPath("source", "target"),
+          decision: "merge",
+          finalPath: "target",
+          rationale: "These fields should be reviewed as one concept.",
+        },
+        {
+          ...reviewWithoutFinalPath("target", "target"),
+          decision: "keep",
+          finalName: "target",
+        },
+      ],
+    };
+
+    const report = renderRunReport({
+      initialGraph: graph,
+      finalGraph: graph,
+      aggregates: [aggregate],
+      reductions: [
+        {
+          changed: false,
+          applied: [],
+          skipped: [{ decision: "merge", model: "JsonSchema", fieldPath: "source", reason: "manual" }],
+        },
+      ],
+      stableIteration: 1,
+      stable: true,
+    });
+
+    expect(report).toContain("## Manual Structural Proposals");
+    expect(report).toContain("| 1 | `JsonSchema` | `source` | merge | `target` |");
+    expect(report).toContain("These fields should be reviewed as one concept.");
+  });
+
+  test("run report flags generic consistency warnings", () => {
+    const initialGraph: ModelGraph = {
+      schemaVersion: 1,
+      source: { path: "schema.json", revision: null },
+      models: [
+        {
+          id: "JsonSchema",
+          kind: "object",
+          source: sourceSpan(),
+          fields: [
+            field("config", "config", "{ token: string; reasoningMode: string; reasoningModeDefault: string }", true),
+            field("config.token", "token", "string", false),
+            field("config.reasoningMode", "reasoningMode", "string", false),
+            field("config.reasoningModeDefault", "reasoningModeDefault", "string", false),
+          ],
+        },
+      ],
+    };
+    const finalGraph: ModelGraph = {
+      ...initialGraph,
+      models: [
+        {
+          ...initialGraph.models[0]!,
+          fields: [
+            field("config", "config", "{ token: string; reasoningMode: string; reasoningModeDefault: string }", true),
+            field("config.reasoningMode", "reasoningMode", "string", false),
+            field("config.reasoningModeDefault", "reasoningModeDefault", "string", false),
+          ],
+        },
+      ],
+    };
+
+    const report = renderRunReport({
+      initialGraph,
+      finalGraph,
+      aggregates: [],
+      reductions: [
+        {
+          changed: true,
+          applied: [{ decision: "remove", model: "JsonSchema", fieldPath: "config.token" }],
+          skipped: [],
+        },
+      ],
+      stableIteration: 1,
+      stable: false,
+    });
+
+    expect(report).toContain("Possible naming drift:");
+    expect(report).toContain("reasoningMode");
+    expect(report).toContain("Removed/deferred child `JsonSchema.config.token` still appears in parent type text");
   });
 
   test("reports full paths when non-rename reviews omit finalPath", () => {
