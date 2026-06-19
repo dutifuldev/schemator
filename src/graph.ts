@@ -1,5 +1,6 @@
 import type { AggregateReview, FieldNode, FieldReview, ModelGraph } from "./types.js";
-import { parentFieldPath, replaceLastFieldPathSegment } from "./field-path.js";
+import { parentFieldPath } from "./field-path.js";
+import { applyRenameMapToPath, finalPathForRename } from "./rename.js";
 
 const simplifyingDecisions = new Set(["rename", "derive", "defer", "remove"]);
 
@@ -241,10 +242,6 @@ function isGraphChangingSimplification(review: FieldReview): boolean {
   return true;
 }
 
-function finalPathForRename(decision: FieldReview): string {
-  return replaceLastFieldPathSegment(decision.fieldPath, decision.finalName);
-}
-
 function applyRenames(field: FieldNode, renameMap: Map<string, string>, renameNames: Map<string, string>): FieldNode {
   const nextPath = applyRenameMapToPath(field.path, renameMap);
   const exactRename = renameMap.get(field.path);
@@ -256,17 +253,6 @@ function applyRenames(field: FieldNode, renameMap: Map<string, string>, renameNa
   };
 }
 
-export function applyRenameMapToPath(path: string, renameMap: Map<string, string>): string {
-  let nextPath = path;
-  const mappings = [...renameMap.entries()]
-    .filter(([from]) => pathMatches(path, from))
-    .sort((left, right) => right[0].length - left[0].length);
-  for (const [from, to] of mappings) {
-    nextPath = replacePathPrefix(nextPath, from, to);
-  }
-  return nextPath;
-}
-
 function assertUniqueFieldPaths(modelId: string, fields: FieldNode[]): void {
   const seen = new Set<string>();
   for (const field of fields) {
@@ -275,20 +261,6 @@ function assertUniqueFieldPaths(modelId: string, fields: FieldNode[]): void {
     }
     seen.add(field.path);
   }
-}
-
-function pathMatches(path: string, from: string): boolean {
-  return path === from || path.startsWith(`${from}.`) || path.startsWith(`${from}[].`);
-}
-
-function replacePathPrefix(path: string, from: string, to: string): string {
-  if (path === from) {
-    return to;
-  }
-  if (path.startsWith(`${from}.`) || path.startsWith(`${from}[].`)) {
-    return `${to}${path.slice(from.length)}`;
-  }
-  return path;
 }
 
 function lastPathSegment(path: string): string {

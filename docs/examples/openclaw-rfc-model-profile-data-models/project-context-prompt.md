@@ -1,4 +1,4 @@
-# Example Project Context Prompt
+# Project Context Prompt
 
 Use this project context for every field decision in the OpenClaw model harness
 profile review.
@@ -27,6 +27,9 @@ The schema may intentionally borrow vocabulary from long-lived declarative
 configuration systems such as Kustomize, Kubernetes-style manifests, JSON
 Schema, package manifests, and similar tools. Treat established configuration
 vocabulary as meaningful evidence, not automatically as implementation jargon.
+When a field, object, or document shape is intentionally inspired by
+Kustomize/Kubernetes-style configuration, keep that borrowed vocabulary stable
+and do not rename it merely to make the name more explicit or domain-specific.
 
 The goal is to find a Lindy data model: stable concepts and names that could
 remain understandable for the next ten or a hundred years.
@@ -46,9 +49,9 @@ Propose large structural changes when they are justified by the model and task
 context. Remove, derive, merge, or move fields when doing so clearly produces a
 smaller, more durable model.
 
-Some extracted blocks may be examples or fixtures rather than canonical model
+Some extracted blocks may be fixtures or draft snippets rather than canonical model
 definitions. Use them as evidence, but do not overfit schema decisions to
-example-only values.
+fixture-only values.
 
 When a decision depends on missing product semantics, say what context is
 missing instead of inventing the invariant.

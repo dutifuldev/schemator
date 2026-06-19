@@ -1,23 +1,15 @@
 #!/usr/bin/env node
-import { createHash } from "node:crypto";
-import { access, mkdir, readdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { access, readdir } from "node:fs/promises";
+import { join } from "node:path";
 import { Command } from "commander";
-import { aggregateReviews, readReviews } from "./aggregate.js";
 import { renderPatchPlan } from "./apply.js";
 import { writeCodexReviews } from "./codex-review.js";
+import { aggregateFromFiles, combineAggregates, deriveFinalGraph, runConvergence } from "./convergence.js";
+import { diffGraphs, renderGraphDiff } from "./diff.js";
 import { extractGraph } from "./extract/index.js";
 import { readJson, readText, resolvePath, writeJson, writeText } from "./files.js";
-import {
-  applyAggregateToGraph,
-  applyRenameMapToPath,
-  graphDecisionKey,
-  hasSimplification,
-  reduceAggregateGraph,
-  type GraphReduction,
-} from "./graph.js";
 import { writeReviewJobs, type FieldPromptOptions, type RunHistoryEntry } from "./jobs.js";
-import { renderReport } from "./report.js";
+import { renderReport, renderRunReport, type ReductionArtifact } from "./report.js";
 import { writeDeterministicReviews } from "./review.js";
 import type { AggregateReview, ModelGraph } from "./types.js";
 import { validateAggregateReview, validateFieldReview, validateModelGraph } from "./validate.js";
@@ -162,7 +154,39 @@ program
         : aggregate.ok
           ? deriveFinalGraph(graph, aggregates ?? [aggregate])
           : undefined;
-      await writeText(resolvePath(options.out), renderReport(graph, aggregate, finalGraph));
+      const reductions = paths.reductionPaths ? await Promise.all(paths.reductionPaths.map(readReduction)) : null;
+      const report = aggregates && reductions && finalGraph
+        ? renderRunReport({
+          initialGraph: graph,
+          finalGraph,
+          aggregates,
+          reductions,
+          stableIteration: reductions.length,
+          stable: reductions.at(-1)?.changed === false,
+        })
+        : renderReport(graph, aggregate, finalGraph);
+      await writeText(resolvePath(options.out), report);
+    });
+  });
+
+program
+  .command("diff")
+  .requiredOption("--run <dir>", "schemator run directory")
+  .option("--out <path>", "Markdown diff output; prints to stdout when omitted")
+  .action(async (options: { run: string; out?: string }) => {
+    await runCommand(async () => {
+      const paths = await reportPaths({ run: options.run });
+      const graph = assertModelGraph(await readJson(paths.graph));
+      if (!paths.finalGraph || !(await pathExists(paths.finalGraph))) {
+        throw new Error(`run directory has no final graph: ${resolvePath(options.run)}`);
+      }
+      const finalGraph = assertModelGraph(await readJson(paths.finalGraph));
+      const diff = renderGraphDiff(diffGraphs(graph, finalGraph));
+      if (options.out) {
+        await writeText(resolvePath(options.out), diff);
+      } else {
+        process.stdout.write(diff);
+      }
     });
   });
 
@@ -186,96 +210,17 @@ program
         throw new Error("--max-iterations must be a positive integer");
       }
       const projectContext = await readProjectContext(options.context);
-      await mkdir(out, { recursive: true });
-      if (projectContext !== undefined) {
-        await writeText(join(out, "project-context.md"), projectContext);
+      if (options.strategy !== "codex" && options.strategy !== "local") {
+        unsupportedStrategy(options.strategy);
       }
-      const initialGraph = await extractGraph(source);
-      let graph: ModelGraph = initialGraph;
-      let lastAggregate: AggregateReview | null = null;
-      let invalidAggregate: AggregateReview | null = null;
-      const aggregates: AggregateReview[] = [];
-      const runHistory: RunHistoryEntry[] = [];
-      const frozenRenamePaths = new Set<string>();
-      let lastReduction: GraphReduction | null = null;
-      let stableIteration = 0;
-
-      for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
-        const graphPath = join(out, `graph.iteration-${iteration}.json`);
-        const reviewsDir = join(out, `reviews.iteration-${iteration}`);
-        const jobsDir = join(out, `jobs.iteration-${iteration}`);
-        const aggregatePath = join(out, `aggregate.iteration-${iteration}.json`);
-        const reductionPath = join(out, `reduction.iteration-${iteration}.json`);
-        await writeJson(graphPath, graph);
-        const reviewOptions = reviewContextOptions(projectContext, runHistory);
-        await writeReviewJobs(graph, jobsDir, reviewOptions);
-        if (options.strategy === "codex") {
-          await writeCodexReviews(graph, reviewsDir, {
-            ...codexOptions(options),
-            ...reviewOptions,
-          });
-        } else if (options.strategy === "local") {
-          await writeDeterministicReviews(graph, reviewsDir, {
-            strategy: "local",
-            ...reviewOptions,
-          });
-        } else {
-          unsupportedStrategy(options.strategy);
-        }
-        const aggregate = await aggregateFromFiles(graphPath, reviewsDir);
-        await writeJson(aggregatePath, aggregate);
-        await writeText(join(out, `patch.iteration-${iteration}.md`), renderPatchPlan(graph, aggregate));
-        lastAggregate = aggregate;
-        aggregates.push(aggregate);
-        stableIteration = iteration;
-
-        if (!aggregate.ok) {
-          invalidAggregate = aggregate;
-          break;
-        }
-        const reduction = reduceAggregateGraph(graph, aggregate, { frozenRenamePaths });
-        lastReduction = reduction;
-        await writeJson(reductionPath, reductionArtifact(reduction));
-        if (!reduction.changed) {
-          break;
-        }
-        recordRunHistory(iteration, reduction, runHistory, frozenRenamePaths);
-        graph = reduction.graph;
-      }
-
-      await writeJson(join(out, "graph.final.json"), graph);
-      if (lastAggregate) {
-        await writeText(join(out, "final-report.md"), renderReport(initialGraph, combineAggregates(aggregates), graph));
-      }
-      await writeText(
-        join(out, "run-summary.json"),
-        `${JSON.stringify(
-          {
-            schemaVersion: 1,
-            source,
-            stableIteration,
-            stable: lastAggregate ? lastAggregate.ok && lastReduction !== null && !lastReduction.changed : false,
-            finalGraph: "graph.final.json",
-            finalReport: "final-report.md",
-            ...(projectContext !== undefined
-              ? {
-                projectContext: "project-context.md",
-                projectContextSha256: sha256(projectContext),
-              }
-              : {}),
-          },
-          null,
-          2,
-        )}\n`,
-      );
-      if (invalidAggregate) {
-        throw new Error(
-          `aggregate validation failed at iteration ${stableIteration}: ${invalidAggregate.findings.map((finding) => finding.message).join("; ")}`,
-        );
-      }
-      if (lastAggregate?.ok && lastReduction?.changed) {
-        throw new Error(`run stopped before convergence after ${stableIteration} iteration(s)`);
-      }
+      await runConvergence({
+        source,
+        out,
+        maxIterations,
+        strategy: options.strategy,
+        ...(projectContext === undefined ? {} : { projectContext }),
+        codex: codexOptions(options),
+      });
     });
   });
 
@@ -356,44 +301,40 @@ function reviewContextOptions(
   };
 }
 
-function sha256(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-async function aggregateFromFiles(graphPath: string, reviewsDir: string): Promise<AggregateReview> {
-  const graph = assertModelGraph(await readJson(graphPath));
-  const reviews = await readReviews(reviewsDir);
-  for (const review of reviews) {
-    const validation = validateFieldReview(review);
-    if (!validation.ok) {
-      throw new Error(`invalid field review for ${review.model}.${review.fieldPath}:\n${validation.errors.join("\n")}`);
-    }
-  }
-  const aggregate = aggregateReviews(graph, reviews);
-  const validation = validateAggregateReview(aggregate);
-  if (!validation.ok) {
-    throw new Error(`aggregate is invalid:\n${validation.errors.join("\n")}`);
-  }
-  return aggregate;
-}
-
 async function readAggregate(path: string): Promise<AggregateReview> {
   return assertAggregateReview(await readJson(path));
+}
+
+async function readReduction(path: string): Promise<ReductionArtifact> {
+  const value = await readJson(path);
+  if (!isRecord(value) || typeof value["changed"] !== "boolean") {
+    throw new Error(`invalid reduction artifact: ${path}`);
+  }
+  const applied = value["applied"];
+  const skipped = value["skipped"];
+  if (!Array.isArray(applied) || !Array.isArray(skipped)) {
+    throw new Error(`invalid reduction artifact: ${path}`);
+  }
+  return value as ReductionArtifact;
 }
 
 async function reportPaths(options: { run?: string; graph?: string; aggregate?: string }): Promise<{
   graph: string;
   aggregate: string;
   aggregatePaths?: string[];
+  reductionPaths?: string[];
   finalGraph?: string;
 }> {
   if (options.run) {
     const runDir = resolvePath(options.run);
     const iteration = await currentRunIteration(runDir);
+    const reductionPaths = reductionPathsThrough(runDir, iteration);
+    const hasReductions = (await Promise.all(reductionPaths.map(pathExists))).every(Boolean);
     return {
       graph: join(runDir, "graph.iteration-1.json"),
       aggregate: join(runDir, `aggregate.iteration-${iteration}.json`),
       aggregatePaths: aggregatePathsThrough(runDir, iteration),
+      ...(hasReductions ? { reductionPaths } : {}),
       finalGraph: join(runDir, "graph.final.json"),
     };
   }
@@ -410,139 +351,8 @@ function aggregatePathsThrough(runDir: string, iteration: number): string[] {
   return Array.from({ length: iteration }, (_, index) => join(runDir, `aggregate.iteration-${index + 1}.json`));
 }
 
-function combineAggregates(aggregates: AggregateReview[]): AggregateReview {
-  const summary = emptySummary();
-  for (const aggregate of aggregates) {
-    for (const decision of Object.keys(summary) as Array<keyof typeof summary>) {
-      summary[decision] += aggregate.summary[decision];
-    }
-  }
-  return {
-    schemaVersion: 1,
-    ok: aggregates.every((aggregate) => aggregate.ok),
-    summary,
-    decisions: aggregates.flatMap((aggregate) => aggregate.decisions),
-    findings: aggregates.flatMap((aggregate) => aggregate.findings),
-  };
-}
-
-function deriveFinalGraph(graph: ModelGraph, aggregates: AggregateReview[]): ModelGraph {
-  let next = graph;
-  for (const aggregate of aggregates) {
-    next = applyAggregateToGraph(next, aggregate);
-  }
-  return next;
-}
-
-function recordRunHistory(
-  iteration: number,
-  reduction: GraphReduction,
-  runHistory: RunHistoryEntry[],
-  frozenRenamePaths: Set<string>,
-): void {
-  const renameMaps = appliedRenameMapsByModel(reduction);
-  rebaseRunHistory(runHistory, renameMaps);
-  rebaseFrozenRenamePaths(frozenRenamePaths, renameMaps);
-
-  for (const applied of reduction.applied) {
-    runHistory.push({
-      iteration,
-      model: applied.model,
-      fieldPath: applied.fieldPath,
-      decision: applied.decision,
-      ...(applied.finalPath === undefined ? {} : { finalPath: applied.finalPath }),
-    });
-    if (applied.decision === "rename" && applied.finalPath !== undefined) {
-      frozenRenamePaths.add(graphDecisionKey(applied.model, applied.finalPath));
-    }
-  }
-}
-
-function appliedRenameMapsByModel(reduction: GraphReduction): Map<string, Map<string, string>> {
-  const renameMaps = new Map<string, Map<string, string>>();
-  for (const applied of reduction.applied) {
-    if (applied.decision !== "rename" || applied.finalPath === undefined) {
-      continue;
-    }
-    const modelMap = renameMaps.get(applied.model) ?? new Map<string, string>();
-    modelMap.set(applied.fieldPath, applied.finalPath);
-    renameMaps.set(applied.model, modelMap);
-  }
-  return renameMaps;
-}
-
-function rebaseRunHistory(
-  runHistory: RunHistoryEntry[],
-  renameMaps: Map<string, Map<string, string>>,
-): void {
-  for (const entry of runHistory) {
-    if (entry.finalPath === undefined) {
-      continue;
-    }
-    const renameMap = renameMaps.get(entry.model);
-    if (renameMap) {
-      entry.finalPath = applyRenameMapToPath(entry.finalPath, renameMap);
-    }
-  }
-}
-
-function rebaseFrozenRenamePaths(
-  frozenRenamePaths: Set<string>,
-  renameMaps: Map<string, Map<string, string>>,
-): void {
-  if (renameMaps.size === 0 || frozenRenamePaths.size === 0) {
-    return;
-  }
-
-  const nextPaths = new Set<string>();
-  for (const key of frozenRenamePaths) {
-    const parsed = parseGraphDecisionKey(key);
-    if (!parsed) {
-      nextPaths.add(key);
-      continue;
-    }
-    const renameMap = renameMaps.get(parsed.model);
-    const fieldPath = renameMap ? applyRenameMapToPath(parsed.fieldPath, renameMap) : parsed.fieldPath;
-    nextPaths.add(graphDecisionKey(parsed.model, fieldPath));
-  }
-
-  frozenRenamePaths.clear();
-  for (const key of nextPaths) {
-    frozenRenamePaths.add(key);
-  }
-}
-
-function parseGraphDecisionKey(key: string): { model: string; fieldPath: string } | null {
-  const separator = key.indexOf("\u0000");
-  if (separator === -1) {
-    return null;
-  }
-  return {
-    model: key.slice(0, separator),
-    fieldPath: key.slice(separator + 1),
-  };
-}
-
-function reductionArtifact(reduction: GraphReduction): Omit<GraphReduction, "graph"> {
-  return {
-    changed: reduction.changed,
-    applied: reduction.applied,
-    skipped: reduction.skipped,
-  };
-}
-
-function emptySummary(): AggregateReview["summary"] {
-  return {
-    totalFields: 0,
-    keep: 0,
-    rename: 0,
-    merge: 0,
-    derive: 0,
-    move: 0,
-    defer: 0,
-    remove: 0,
-    opaque: 0,
-  };
+function reductionPathsThrough(runDir: string, iteration: number): string[] {
+  return Array.from({ length: iteration }, (_, index) => join(runDir, `reduction.iteration-${index + 1}.json`));
 }
 
 async function currentRunIteration(runDir: string): Promise<number> {

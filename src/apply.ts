@@ -1,10 +1,9 @@
 import type { AggregateReview, ModelGraph } from "./types.js";
-import { replaceLastFieldPathSegment } from "./field-path.js";
-import { applyRenameMapToPath } from "./graph.js";
+import { finalPathForDecision, renameMapsByModel } from "./rename.js";
 
 export function renderPatchPlan(graph: ModelGraph, aggregate: AggregateReview): string {
   const lines: string[] = [];
-  const renameMaps = renameMapsByModel(aggregate);
+  const renameMaps = renameMapsByModel(aggregate.decisions);
   lines.push(`# Schemator Simplification Patch Plan`);
   lines.push("");
   lines.push(`Source: ${graph.source.path}`);
@@ -37,37 +36,6 @@ export function renderPatchPlan(graph: ModelGraph, aggregate: AggregateReview): 
   }
 
   return `${lines.join("\n")}\n`;
-}
-
-function renameMapsByModel(aggregate: AggregateReview): Map<string, Map<string, string>> {
-  const maps = new Map<string, Map<string, string>>();
-  for (const decision of aggregate.decisions) {
-    if (decision.decision !== "rename") {
-      continue;
-    }
-    const renameMap = maps.get(decision.model) ?? new Map<string, string>();
-    renameMap.set(decision.fieldPath, rawFinalPathForRename(decision));
-    maps.set(decision.model, renameMap);
-  }
-  return maps;
-}
-
-function finalPathForDecision(
-  decision: AggregateReview["decisions"][number],
-  renameMaps: Map<string, Map<string, string>>,
-): string {
-  const renameMap = renameMaps.get(decision.model);
-  if (renameMap) {
-    return applyRenameMapToPath(decision.fieldPath, renameMap);
-  }
-  if (decision.decision === "rename") {
-    return decision.finalPath ?? rawFinalPathForRename(decision);
-  }
-  return decision.finalPath ?? decision.fieldPath;
-}
-
-function rawFinalPathForRename(decision: AggregateReview["decisions"][number]): string {
-  return replaceLastFieldPathSegment(decision.fieldPath, decision.finalName);
 }
 
 function sourceNameForDecision(graph: ModelGraph, decision: AggregateReview["decisions"][number]): string {
