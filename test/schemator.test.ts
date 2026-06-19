@@ -343,6 +343,15 @@ describe("schemator", () => {
     expect(prompt).not.toContain("baseProfileId");
   });
 
+  test("discourages longer explicit names without real ambiguity", async () => {
+    const graph = graphWithOneField("Policy", "profile", "profile");
+    const prompt = await promptForGraph(graph);
+
+    expect(prompt).toContain("Prefer the shortest clear name");
+    expect(prompt).toContain("Do not add suffixes like `Id`, `Mode`, `Policy`, `Preset`, `Default`, or `Config`");
+    expect(prompt).toContain("only when the suffix changes the meaning or prevents a real ambiguity");
+  });
+
   test("includes referenced model fields in generated field prompts", async () => {
     const graph: ModelGraph = {
       schemaVersion: 1,

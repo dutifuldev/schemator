@@ -71,6 +71,8 @@ export function renderFieldPrompt(
     "- Use `remove`, `derive`, `merge`, or `defer` when that produces a smaller viable model.",
     "- Use `opaque` only with a clear owner boundary.",
     "- Challenge names that are metaphorical, vague, redundant, or tied to a temporary implementation detail.",
+    "- Prefer the shortest clear name. Do not rename a field to a longer or more explicit name unless the current name is genuinely ambiguous, misleading, or missing an important distinction.",
+    "- Do not add suffixes like `Id`, `Mode`, `Policy`, `Preset`, `Default`, or `Config` just to make a name more explicit. Add them only when the suffix changes the meaning or prevents a real ambiguity in the surrounding schema.",
     "- Preserve established declarative configuration vocabulary when the project context says that vocabulary is intentional.",
     "",
   ].join("\n");
