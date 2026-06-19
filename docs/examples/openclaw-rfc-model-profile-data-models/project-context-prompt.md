@@ -27,6 +27,9 @@ The schema may intentionally borrow vocabulary from long-lived declarative
 configuration systems such as Kustomize, Kubernetes-style manifests, JSON
 Schema, package manifests, and similar tools. Treat established configuration
 vocabulary as meaningful evidence, not automatically as implementation jargon.
+When a field, object, or document shape is intentionally inspired by
+Kustomize/Kubernetes-style configuration, keep that borrowed vocabulary stable
+and do not rename it merely to make the name more explicit or domain-specific.
 
 The goal is to find a Lindy data model: stable concepts and names that could
 remain understandable for the next ten or a hundred years.
