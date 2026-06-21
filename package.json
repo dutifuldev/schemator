@@ -29,6 +29,7 @@
     "dist/**",
     "schemas/**",
     "skills/**",
+    "LICENSE",
     "README.md"
   ],
   "scripts": {

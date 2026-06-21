@@ -9,9 +9,17 @@ safe reductions, and repeats until the graph stabilizes.
 
 ## Quick Start
 
-From a local checkout, install dependencies first:
+Install from the GitHub package tarball attached to the release:
 
 ```bash
+npm install -g https://github.com/dutifuldev/schemator/releases/download/v0.1.0/schemator-0.1.0.tgz
+```
+
+Or use a local checkout:
+
+```bash
+git clone https://github.com/dutifuldev/schemator.git
+cd schemator
 npm install
 ```
 
@@ -99,3 +107,7 @@ Bundled skills:
 ## More
 
 - [OpenClaw RFC review artifacts](docs/examples/openclaw-rfc-model-profile-data-models/)
+
+## License
+
+[MIT](LICENSE)
