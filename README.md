@@ -9,10 +9,10 @@ safe reductions, and repeats until the graph stabilizes.
 
 ## Quick Start
 
-Install from the GitHub package tarball attached to the release:
+Install the published package:
 
 ```bash
-npm install -g https://github.com/dutifuldev/schemator/releases/download/v0.1.0/schemator-0.1.0.tgz
+npm install -g @dutifuldev/schemator
 ```
 
 Or use a local checkout:
@@ -106,6 +106,7 @@ Bundled skills:
 
 ## More
 
+- [npm package](https://www.npmjs.com/package/@dutifuldev/schemator)
 - [OpenClaw RFC review artifacts](docs/examples/openclaw-rfc-model-profile-data-models/)
 
 ## License

@@ -1,9 +1,12 @@
 {
-  "name": "schemator",
+  "name": "@dutifuldev/schemator",
   "version": "0.1.0",
   "description": "Extract, challenge, and simplify data models until stable.",
   "license": "MIT",
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/dutifuldev/schemator.git"
