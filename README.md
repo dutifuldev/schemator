@@ -43,6 +43,27 @@ Use `--context` for product and naming guidance. Good context explains what the
 schema is for, which fields are user-facing, which vocabulary is intentional,
 and what should stay stable.
 
+## Quick Setup: Tell Your Agent About Schemator
+
+If you are an agent using Schemator to review a repository's data model, start
+with [Agent Entrypoint](docs/AGENT_ENTRYPOINT.md). It explains how to find the
+schema or proposal, choose context, run Schemator, inspect artifacts, and report
+manual decisions.
+
+Copy the block below and paste it into your coding agent when you want it to
+review a data model with Schemator.
+
+```text
+Use Schemator to review and simplify this project's data model.
+
+Attention agent: start with this file before changing files:
+https://raw.githubusercontent.com/dutifuldev/schemator/refs/heads/main/docs/AGENT_ENTRYPOINT.md
+
+Follow it exactly. Inspect the existing schema or proposal, run Schemator,
+review the report and diff, and ask only for missing product semantics or
+naming constraints before applying schema changes.
+```
+
 ## Review Strategy
 
 `codex` is the default strategy. It starts one independent `codex exec` reviewer
