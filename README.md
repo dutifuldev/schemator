@@ -128,7 +128,6 @@ Bundled skills:
 ## More
 
 - [npm package](https://www.npmjs.com/package/@dutifuldev/schemator)
-- [OpenClaw RFC review artifacts](docs/examples/openclaw-rfc-model-profile-data-models/)
 
 ## License
 
