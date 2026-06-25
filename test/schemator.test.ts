@@ -28,7 +28,7 @@ describe("schemator", () => {
         [
           "```ts",
           "type ModelProfilePolicy = {",
-          "  promptRecipe?: \"standard-v1\" | \"gpt-5-v1\";",
+          "  promptRecipe?: \"default-prompt\" | \"gpt-5-prompt\";",
           "  nested?: {",
           "    value: string;",
           "  };",
@@ -2424,7 +2424,7 @@ describe("schemator", () => {
           "```jsonc",
           "{",
           "  // comments and trailing commas are valid JSONC",
-          '  "promptRecipe": "standard-v1",',
+          '  "promptRecipe": "default-prompt",',
           "}",
           "```",
         ].join("\n"),
@@ -2594,7 +2594,7 @@ describe("schemator", () => {
         JSON.stringify({
           id: "example",
           properties: {
-            promptRecipe: "standard-v1",
+            promptRecipe: "default-prompt",
           },
         }),
       );
@@ -2618,7 +2618,7 @@ describe("schemator", () => {
         source,
         JSON.stringify({
           properties: {
-            promptRecipe: "standard-v1",
+            promptRecipe: "default-prompt",
           },
         }),
       );
@@ -2641,7 +2641,7 @@ describe("schemator", () => {
         source,
         JSON.stringify({
           $schema: "https://example.com/schema.json",
-          promptRecipe: "standard-v1",
+          promptRecipe: "default-prompt",
         }),
       );
       const graph = await extractGraph(source);
@@ -2731,7 +2731,7 @@ describe("schemator", () => {
             id: "a",
           },
           {
-            promptRecipe: "standard-v1",
+            promptRecipe: "default-prompt",
           },
         ]),
       );
@@ -2765,7 +2765,7 @@ describe("schemator", () => {
               id: "a",
             },
             {
-              promptRecipe: "standard-v1",
+              promptRecipe: "default-prompt",
               nested: {
                 value: "x",
               },

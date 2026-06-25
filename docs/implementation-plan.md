@@ -120,7 +120,7 @@ Convert extracted models into a language-agnostic graph.
         {
           "path": "promptRecipe",
           "name": "promptRecipe",
-          "type": "\"standard-v1\" | \"gpt-5-v1\"",
+          "type": "\"default-prompt\" | \"gpt-5-prompt\"",
           "required": false,
           "nullable": false,
           "parent": "ModelProfilePolicy",
@@ -181,7 +181,7 @@ Each sub-run must return structured JSON:
   "fieldPath": "promptRecipe",
   "decision": "rename",
   "finalName": "systemPromptVariant",
-  "finalType": "\"standard-v1\" | \"gpt-5-v1\"",
+  "finalType": "\"default-prompt\" | \"gpt-5-prompt\"",
   "required": false,
   "rationale": "The field is needed only as a code-owned prompt contribution selector. Recipe is too broad.",
   "alternatives": [

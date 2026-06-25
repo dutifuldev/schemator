@@ -1,16 +1,16 @@
-# KRM ModelProfile Resource Data Model Review
+# AgentProfile Resource Data Model Review
 
 ## Purpose
 
-The KRM-style `ModelProfile` resource is the profile artifact authoring format.
+The `AgentProfile` resource is the profile artifact authoring format.
 It gives profile packs familiar `apiVersion`, `kind`, `metadata`, and `spec`
 structure while keeping runtime selection on a validated materialized registry.
 
 ## Current use cases
 
 - Author built-in, ClawHub, private, and intranet-hosted profile artifacts.
-- Let Kustomize-style overlays derive Claude or enterprise profiles from a base.
-- Materialize profile resources into `ModelHarnessProfile` records.
+- Let profile layering derive model-family or enterprise profiles from a base.
+- Materialize profile resources into `AgentProfile` records.
 - Keep prompt text, provider payload fragments, and executable behavior out of
   remote artifacts.
 - Support public and private profile distribution with clear resource identity.
@@ -18,18 +18,20 @@ structure while keeping runtime selection on a validated materialized registry.
 ## First draft schema
 
 ```yaml
-apiVersion: profiles.openclaw.ai/v1alpha1
-kind: ModelProfile
+apiVersion: agentprofiles.io/v1
+kind: AgentProfile
 metadata:
   namespace: openclaw
-  name: anthropic-agent-v1
+  name: qwen3-6-35b-a3b-profile-v1
 spec:
-  policy:
-    toolExposure: standard-v1
-    toolSearchDefault: inherit
-    promptRecipe: standard-v1
-    reasoningDefault: inherit
-    contextPosture: standard
+  common:
+    systemPrompt:
+      file:
+        path: ./prompts/system.md
+    thinkingLevel: high
+  openclaw.ai:
+    toolProfile: lean
+    contextPosture: constrained
 ```
 
 ## Information table
@@ -37,12 +39,13 @@ spec:
 | Field/column | Type | Required? | Purpose | Why might it belong? | Alternatives / synonyms | Simplest option |
 | --- | --- | --- | --- | --- | --- | --- |
 | `apiVersion` | string | yes | Identifies the resource API group and version | KRM convention and necessary for future schema evolution | `schemaVersion`, `version` | `apiVersion` follows KRM/Kustomize conventions |
-| `kind` | literal `ModelProfile` | yes | Identifies the resource type | Required for KRM-style targeting and patching | `type`, `resourceType` | `kind` follows KRM conventions |
+| `kind` | literal `AgentProfile` | yes | Identifies the resource type | Required for resource targeting and patching | `type`, `resourceType` | `kind` follows KRM conventions |
 | `metadata` | object | yes | Holds resource identity | KRM convention for name/namespace and patch target identity | `identity`, `resource`, `meta` | `metadata` follows KRM conventions |
 | `metadata.namespace` | string | no | Groups profile resources by owner or registry namespace | Useful for public/private authors without overloading names | `owner`, `scope`, `org` | `namespace` is familiar in KRM; optional keeps simple local profiles possible |
 | `metadata.name` | string | yes | Resource-local name | Required for overlay target identity and materialized profile id construction | `id`, `profileName` | `name` follows KRM conventions |
 | `spec` | object | yes | Holds profile definition | Separates resource metadata from profile behavior | root-level profile fields, `definition` | `spec` follows KRM conventions |
-| `spec.policy` | `ModelProfilePolicy` | yes | Holds closed portable harness policy fields | Primary artifact behavior payload | `behavior`, `harnessPolicy` | `policy` matches materialized profile model |
+| `spec.common` | `AgentProfileCommon` | yes | Holds portable profile fields | Primary harness-agnostic behavior payload | `behavior`, `harnessPolicy` | `common` matches the current Agent Profile schema |
+| `spec.openclaw.ai` | `OpenClawAgentProfileSpec` | no | Holds OpenClaw-owned behavior fields | Keeps OpenClaw-specific choices out of the common schema | `openclaw`, `openclawSettings` | domain-named section matches the current Agent Profile schema |
 
 ## Reasoning step
 
@@ -67,29 +70,32 @@ resource identity to profile id during materialization.
 | Field/column | Decision | Final name | Final type | Required? | Reason |
 | --- | --- | --- | --- | --- | --- |
 | `apiVersion` | keep | `apiVersion` | string | yes | Required for KRM-style schema versioning |
-| `kind` | keep | `kind` | literal `ModelProfile` | yes | Required for Kustomize-style resource targeting |
+| `kind` | keep | `kind` | literal `AgentProfile` | yes | Required for resource targeting |
 | `metadata` | keep | `metadata` | object | yes | Holds resource identity separately from profile behavior |
 | `metadata.namespace` | keep | `metadata.namespace` | string | no | Useful for owner/registry grouping while optional for simple packs |
 | `metadata.name` | keep | `metadata.name` | string | yes | Required resource name and overlay target |
 | `spec` | keep | `spec` | object | yes | KRM location for desired profile content |
-| `spec.policy` | keep | `spec.policy` | `ModelProfilePolicy` | yes | Core closed harness policy |
+| `spec.common` | keep | `spec.common` | `AgentProfileCommon` | yes | Core portable profile fields |
+| `spec.openclaw.ai` | keep | `spec.openclaw.ai` | `OpenClawAgentProfileSpec` | no | OpenClaw-specific profile fields |
 | `spec.settings` | keep | `spec.settings` | `ModelProfileSettingsSchema` | no | Needed for GPT-5 personality and similar narrow settings |
 
 ## Final revised schema
 
 ```yaml
-apiVersion: profiles.openclaw.ai/v1alpha1
-kind: ModelProfile
+apiVersion: agentprofiles.io/v1
+kind: AgentProfile
 metadata:
   namespace: openclaw
-  name: anthropic-agent-v1
+  name: qwen3-6-35b-a3b-profile-v1
 spec:
-  policy:
-    toolExposure: standard-v1
-    toolSearchDefault: inherit
-    promptRecipe: standard-v1
-    reasoningDefault: inherit
-    contextPosture: standard
+  common:
+    systemPrompt:
+      file:
+        path: ./prompts/system.md
+    thinkingLevel: high
+  openclaw.ai:
+    toolProfile: lean
+    contextPosture: constrained
   settings: {}
 ```
 
