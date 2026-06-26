@@ -1,11 +1,10 @@
 # schemator
 
-Schemator reviews a draft data model and pushes it toward a smaller, clearer
-schema.
+Schemator is a schema and data-model review CLI for agents and maintainers.
 
-It extracts fields from TypeScript, JSON Schema, YAML, JSON, or Markdown
-proposal snippets, asks independent reviewers to challenge each field, applies
-safe reductions, and repeats until the graph stabilizes.
+It turns draft TypeScript, JSON Schema, YAML, JSON, or Markdown proposal
+snippets into a reviewed field graph, asks independent reviewers to challenge
+each field, applies safe reductions, and repeats until the model stabilizes.
 
 ## Quick Start
 

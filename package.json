@@ -1,7 +1,7 @@
 {
   "name": "@dutifuldev/schemator",
   "version": "0.1.0",
-  "description": "Extract, challenge, and simplify data models until stable.",
+  "description": "Schema and data-model review CLI for agents and maintainers.",
   "license": "MIT",
   "type": "module",
   "publishConfig": {
