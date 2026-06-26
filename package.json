@@ -1,7 +1,7 @@
 {
   "name": "@dutifuldev/schemator",
   "version": "0.1.0",
-  "description": "Schema and data-model review CLI for agents and maintainers.",
+  "description": "Schema and data-model review CLI for agents.",
   "license": "MIT",
   "type": "module",
   "publishConfig": {
